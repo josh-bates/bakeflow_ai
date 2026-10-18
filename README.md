@@ -4,9 +4,14 @@ An AI-assisted back-office system for a home-based bakery, developed for **ELEC5
 
 BakeFlow AI helps a bakery owner manage custom cake and cupcake enquiries, orders, ingredient stock, production, quotations, bookkeeping and marketing. Four specialist AI agents interpret requests and propose outcomes; deterministic services validate business data, perform calculations and coordinate workflows. The owner retains approval over important decisions.
 
-**Status:** Stage Two repository preparation only. This initial snapshot contains documentation and reference materials. Application code, dependencies, deployment configuration and automated workflows have not been implemented. The framework, SQL database engine and LLM provider remain undecided, as specified in Stage One.
+**Status:** Stage Two implementation in progress. Deterministic quotation code and the BAKE-10 browser shell are present. The frontend uses the working React/TypeScript/Vite choice; backend integration and deployment are still pending. The real LLM provider remains undecided; Sprint 1 uses Mock.
 
 ## Planned capabilities
+
+The BAKE-10 browser interface is now available in [`frontend/`](frontend/README.md).
+Its customer page and owner placeholders require the proposed backend endpoints
+in [the interface handoff](docs/bake-10-interface.md). Frontend tests use simulated
+responses; end-to-end backend integration is still pending.
 
 | Module | Stage One requirements | Use cases | Stage One lead |
 | --- | --- | --- | --- |

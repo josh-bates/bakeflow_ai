@@ -16,3 +16,8 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Frontend build and dependencies
+node_modules/
+frontend/dist/
+frontend/coverage/
