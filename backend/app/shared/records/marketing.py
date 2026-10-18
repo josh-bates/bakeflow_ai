@@ -67,6 +67,9 @@ class MarketingContent(RowVersioned, Base):
     __tablename__ = "marketing_contents"
     __record_type__ = "MarketingContent"
     __record_id__ = "content_id"
+    # Calendar placement and the owner's opt-in belong to one approved version
+    # [O4]; editing the body or schedule is a new version.
+    __mutable_fields__ = frozenset({"calendar_placed_at", "auto_publish_opt_in"})
     __table_args__ = (
         ForeignKeyConstraint(
             ["campaign_id", "campaign_version"],

@@ -14,6 +14,7 @@ from app.shared.store import (
     RecordNotFound,
     RecordValidationError,
     StaleVersionError,
+    UnauditedWriteError,
     ValidatedRecordStore,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "RecordRef",
     "RecordValidationError",
     "StaleVersionError",
+    "UnauditedWriteError",
     "ValidatedRecordStore",
 ]

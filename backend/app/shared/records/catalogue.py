@@ -91,4 +91,4 @@ class InventoryItem(InPlaceVersioned, Base):
     quantity_on_hand: Mapped[Decimal] = mapped_column(Quantity)
     unit_cost: Mapped[Decimal] = mapped_column(UnitCost)
     # [O1] optional low-stock alert threshold.
-    reorder_threshold: Mapped[Decimal] = mapped_column(Quantity, default=Decimal("0"))
+    reorder_threshold: Mapped[Decimal] = mapped_column(Quantity, default=Decimal("0.000"))

@@ -33,6 +33,9 @@ class Quote(RowVersioned, Base):
     __tablename__ = "quotes"
     __record_type__ = "Quote"
     __record_id__ = "quote_id"
+    # TX-ACCEPT records the customer's decision on the current version (§4.2);
+    # every other change is a new version.
+    __mutable_fields__ = frozenset({"customer_decision"})
     __table_args__ = (
         one_of("customer_decision", CustomerDecision, "customer_decision"),
         CheckConstraint(
