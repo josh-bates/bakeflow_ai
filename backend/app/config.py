@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/config.py -> repository root. In the Docker image this is "/".
@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     timezone: str = "Australia/Sydney"
     # Built React app served by FastAPI when present (BAKE-10 produces it).
     frontend_dist: Path = REPO_ROOT / "frontend" / "dist"
+    # Demo account passwords used by `python -m app.seed` (BAKE-7).
+    seed_owner_password: SecretStr | None = None
+    seed_customer_password: SecretStr | None = None
 
     @field_validator("timezone")
     @classmethod
