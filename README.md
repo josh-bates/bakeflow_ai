@@ -21,6 +21,7 @@ These are the report's design responsibilities, not a claim about completed impl
 
 - [Stage One design baseline](docs/design-baseline.md)
 - [Stage Two assessment and evidence](docs/stage-two.md)
+- [Stage Two architecture proposal (draft, pending team review)](docs/architecture.md)
 - [Jira handoff and initial backlog](docs/jira-handoff.md)
 - [Contribution workflow](CONTRIBUTING.md)
 - [Source material inventory](docs/source-materials.md)
