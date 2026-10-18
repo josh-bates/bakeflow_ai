@@ -30,7 +30,8 @@ export function OwnerPage({ page }: { page: OwnerPageName }) {
   const content = ownerPages[page];
   return (
     <>
-      <section className="intro">
+      <section className="intro owner-intro">
+        <img className="hero-art" src="/bakery-illustration.svg" alt="" aria-hidden="true" />
         <p className="eyebrow">OWNER WORKSPACE</p>
         <h1>{content.title}</h1>
         <p>{content.description}</p>

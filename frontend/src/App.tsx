@@ -75,7 +75,7 @@ export function App() {
           <span className="brand-mark" aria-hidden="true">
             ✳
           </span>
-          BakeFlow<span className="brand-small">BAKERY WORKSPACE</span>
+          BAKEFLOW AI<span className="brand-small">BAKERY WORKSPACE</span>
         </a>
         {session && (
           <div className="identity">

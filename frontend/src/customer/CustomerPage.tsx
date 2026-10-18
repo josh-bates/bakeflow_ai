@@ -87,12 +87,13 @@ export function CustomerPage({
 
   return (
     <>
-      <section className="intro">
-        <p className="eyebrow">CUSTOMER SPACE</p>
+      <section className="intro customer-intro">
+        <img className="hero-art" src="/bakery-illustration.svg" alt="" aria-hidden="true" />
+        <p className="eyebrow">A HELPING HAND FOR ROSIE’S BAKERY</p>
         <h1>
-          A little occasion.
+          YOUR NEXT
           <br />
-          <em>Something delicious.</em>
+          <em>SWEET OCCASION.</em>
         </h1>
         <p>
           Tell us what you have in mind. We’ll help turn the details into your
@@ -145,11 +146,11 @@ export function CustomerPage({
           <span className="stamp" aria-hidden="true">
             ✳
           </span>
-          <p className="eyebrow">THOUGHTFULLY MADE</p>
+          <p className="eyebrow">A LITTLE HELP</p>
           <h2>
-            Good things start
+            Before Rosie
             <br />
-            with the details.
+            can bake…
           </h2>
           <ol>
             <li>
