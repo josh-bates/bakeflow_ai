@@ -1,10 +1,10 @@
 # BAKE-11: customer-confirmed draft orders
 
-Implements Ziyi's UC-01 / AR-01 intake: SalesAgent interprets a customer request through BAKE-9; BAKE-8 bounds malformed/provider failures to three calls total; deterministic validation checks catalogue membership, whole positive quantities, future timezone-aware collection time, optional nonnegative budget, and explicit allergen disclosure. Missing customer facts produce an incomplete summary rather than attempts to invent facts. A customer can correct the original text and request a new summary.
+Implements Ziyi's UC-01 / AR-01 intake: SalesAgent interprets a customer request through BAKE-9; BAKE-8 bounds malformed/provider failures to three calls total; deterministic validation checks catalogue membership, whole positive quantities, future timezone-aware collection time, optional nonnegative budget, and explicit allergen disclosure. Missing customer facts produce an incomplete summary rather than attempts to invent facts. The agent must quote an allergen disclosure from the actual request. Empty concerns additionally require an explicit phrase such as “no allergy concerns”, “no allergies”, or “allergies: none”; otherwise confirmation stays blocked. A customer can correct the original text and request a new summary.
 
 ## Dependencies and scope
 
-This branch integrates BAKE-10 (#7), BAKE-7 (#8), BAKE-8 (#4), BAKE-9 (#5) and main's BAKE-6 skeleton, preserving their commits. These dependencies need teammate review/merge; only the intake, its UI integration, tests and the changes below belong to BAKE-11. Do not merge dependency implementations as unreviewed BAKE-11 work.
+This branch integrates BAKE-10 (#7), BAKE-7 (#8), BAKE-8 (#4), BAKE-9 (#5) and main's BAKE-6 skeleton, preserving their commits. BAKE-6 and BAKE-7 are now merged; BAKE-10, BAKE-8 and BAKE-9 still need teammate review/merge; only the intake, its UI integration, tests and the changes below belong to BAKE-11. Do not merge dependency implementations as unreviewed BAKE-11 work.
 
 - `POST /api/order-requests {message}` returns `summary`, `issues`, and an optional signed `confirmationToken`. It does not save an Order.
 - `POST /api/order-requests/confirm {confirmationToken}` revalidates the signed, customer-bound summary and writes an Order plus its AuditEntry through ValidatedRecordStore in one transaction. Response contains `orderId` and `status: Draft` only after commit. No stock or recipe changes occur.
@@ -46,3 +46,25 @@ Other inputs fail after the bounded attempts rather than producing a fabricated 
 Unit tests use SQLite for transaction rollback, record snapshots and HTTP checks; that does not verify PostgreSQL row locking. PostgreSQL integration tests cover migrations, persisted drafts/audits, unchanged inventory, rollback and concurrent duplicate confirmation. Run them using the documented disposable BAKE-7 test database and `BAKEFLOW_TEST_DATABASE_URL`; never point the test suite at demo or real data because it resets the schema. The backend CI job provisions its own throwaway PostgreSQL.
 
 Frontend tests cover summary-before-save, incomplete requests, correction, confirmation failure and retry, alongside BAKE-10 navigation/session coverage. Full acceptance still requires PostgreSQL tests, browser walkthrough with screenshot evidence, account integration and a reviewed PR. No claim of completed Jira DoD or a confirmed sale is made.
+
+
+### Optional local PostgreSQL launcher (without Docker)
+
+Installed locally for development; the team's Compose deployment is unchanged.
+
+```sh
+# From backend/, with the frontend already built:
+.venv/bin/python -m pip install -r requirements-local-demo.txt
+.venv/bin/python scripts/run_local_demo.py
+```
+
+This launcher runs a native PostgreSQL 16.2 server, applies migrations, seeds only an empty database, and starts the Mock demo at http://127.0.0.1:4176. Data persists under the ignored `.local/postgres-demo/` directory. Stop with Ctrl+C; restarting preserves drafts. Seed passwords are generated locally and never logged; this explicitly local demo uses the single seeded customer's identity. Do not deploy this identity shortcut to a public server. Team CI uses PostgreSQL 17.
+
+### Validation performed 19 October 2026
+
+- 181 backend tests passed against a newly created native PostgreSQL test database, including all integration tests; no skipped tests.
+- 14 frontend tests and production build passed.
+- Browser walkthrough on the persistent local PostgreSQL demo: Jira input → summary → confirm → Draft reference → refresh retains the saved order. Missing allergen disclosure disables confirmation; correcting the input enables a new summary.
+- Screenshot: [summary before confirmation](evidence/bake-11/summary-before-confirmation.png). This captures Mock extraction with real local database persistence, not a live LLM test. Jira attachment and team review remain outstanding.
+
+BAKE-14 authentication integration is still pending. Live provider extraction has not been exercised; no API key is required for these Mock tests.

@@ -15,7 +15,7 @@ from app.shared.records import Order, AuditEntry, InventoryItem
 def intake(store, seeded):
     data = {"items": [{"product": "Vanilla cupcake", "quantity": 24, "flavour": "vanilla", "theme": "birthday"}],
             "required_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
-            "collection_kind": "before", "allergen_concerns": [], "budget": None}
+            "collection_kind": "before", "allergen_concerns": [], "allergen_statement": "no allergy concerns", "budget": None}
     flow = OrderIntake(store, MockLLMClient(default_reply=json.dumps(data)), b"integration-test-key")
     identity = CustomerIdentity(seeded.customer_user_id, seeded.customer_id, "Customer")
     return flow, identity
@@ -25,7 +25,7 @@ def test_confirm_commits_draft_and_audit_without_stock_change(intake):
     flow, customer = intake
     with flow.store.unit_of_work() as db:
         before = {i.item_id: i.quantity_on_hand for i in db.scalars(select(InventoryItem))}
-    preview = flow.preview(customer, "request")
+    preview = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")
     receipt = flow.confirm(customer, preview["confirmationToken"])
     assert receipt["status"] == "Draft"
     with flow.store.unit_of_work() as db:
@@ -40,7 +40,7 @@ def test_confirm_commits_draft_and_audit_without_stock_change(intake):
 
 def test_concurrent_confirmations_create_one_order(intake):
     flow, customer = intake
-    token = flow.preview(customer, "request")["confirmationToken"]
+    token = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")["confirmationToken"]
     with ThreadPoolExecutor(max_workers=2) as executor:
         receipts = list(executor.map(lambda _: flow.confirm(customer, token), range(2)))
     assert receipts[0] == receipts[1]
@@ -51,7 +51,7 @@ def test_concurrent_confirmations_create_one_order(intake):
 
 def test_transaction_failure_does_not_leave_order_or_audit(intake, monkeypatch):
     flow, customer = intake
-    token = flow.preview(customer, "request")["confirmationToken"]
+    token = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")["confirmationToken"]
     original = flow.store.commit
     def fail_after_flush(*args, **kwargs):
         original(*args, **kwargs)

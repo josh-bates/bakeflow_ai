@@ -16,12 +16,13 @@ def mock_for(message: str) -> MockLLMClient:
     if collection <= now:
         collection = collection.replace(year=now.year + 1)
     summary = {"items": [{"product": "Vanilla cupcake", "quantity": 24, "flavour": "vanilla", "theme": "birthday"}],
-               "required_at": collection.isoformat(), "collection_kind": "before", "allergen_concerns": [], "budget": None}
+               "required_at": collection.isoformat(), "collection_kind": "before", "allergen_concerns": [], "allergen_statement": "no allergy concerns", "budget": None}
     message = message.strip().casefold()
     if message == MISSING_TIME_MESSAGE.casefold():
         summary["required_at"] = None
     elif message == MISSING_ALLERGY_MESSAGE.casefold():
         summary["allergen_concerns"] = None
+        summary["allergen_statement"] = None
     elif message == UNSUPPORTED_MESSAGE.casefold():
         summary["items"][0]["product"] = "croissant"
     elif message != DEMO_MESSAGE.casefold():

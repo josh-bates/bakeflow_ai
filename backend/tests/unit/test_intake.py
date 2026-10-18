@@ -30,7 +30,7 @@ def sqlite_json(element, compiler, **kw):
 def valid_data():
     return {"items": [{"product": "Vanilla cupcake", "quantity": 24, "flavour": "vanilla", "theme": "birthday"}],
             "required_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
-            "collection_kind": "before", "allergen_concerns": [], "budget": "100.00"}
+            "collection_kind": "before", "allergen_concerns": [], "allergen_statement": "no allergy concerns", "budget": "100.00"}
 
 
 @pytest.fixture
@@ -43,11 +43,12 @@ def environment():
     store = ValidatedRecordStore(sessionmaker(engine, expire_on_commit=False))
     uid, cid = uuid.uuid4(), uuid.uuid4()
     with store.unit_of_work() as db:
-        db.add(UserAccount(user_id=uid, email="customer@example.test", password_hash="test-only", role="Customer"))
-        db.flush()
-        db.add(Customer(customer_id=cid, user_id=uid, name="Customer", contact="demo"))
-        db.add(Product(name="Vanilla cupcake", category="cupcake", labour_minutes=1, packaging_cost=1))
-        db.add(InventoryItem(ingredient_name="Flour", unit="g", quantity_on_hand=1000, unit_cost=1))
+        records = [UserAccount(user_id=uid, email="customer@example.test", password_hash="test-only", role="Customer"),
+                   Customer(customer_id=cid, user_id=uid, name="Customer", contact="demo"),
+                   Product(name="Vanilla cupcake", category="cupcake", labour_minutes=1, packaging_cost=1),
+                   InventoryItem(ingredient_name="Flour", unit="g", quantity_on_hand=1000, unit_cost=1)]
+        for record in records:
+            store.commit(db, record, actor_id=uid, action="test.seed")
     yield store, CustomerIdentity(uid, cid, "Customer")
     engine.dispose()
 
@@ -69,7 +70,7 @@ def service(environment, data=None):
 def test_incomplete_or_invalid_request_cannot_be_saved(environment, change, expected):
     data = valid_data() | change
     flow, customer, client = service(environment, data)
-    preview = flow.preview(customer, "request")
+    preview = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")
     assert preview["confirmationToken"] is None
     assert expected in " ".join(preview["issues"])
     assert len(client.calls) == 1
@@ -81,14 +82,14 @@ def test_incomplete_or_invalid_request_cannot_be_saved(environment, change, expe
     valid_data() | {"items": [{"product": "Vanilla cupcake", "quantity": 24, "customisation": "replace eggs"}]}])
 def test_owner_exceptions_cannot_be_saved(environment, data):
     flow, customer, _ = service(environment, data)
-    result = flow.preview(customer, "request")
+    result = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")
     assert result["confirmationToken"] is None
     assert "owner review" in " ".join(result["issues"])
 
 
 def test_preview_then_confirmation_saves_one_draft_and_audit_without_stock_changes(environment):
     flow, customer, _ = service(environment)
-    preview = flow.preview(customer, "request")
+    preview = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")
     assert preview["issues"] == []
     with flow.store.unit_of_work() as db:
         assert db.scalar(select(func.count()).select_from(Order)) == 0
@@ -102,7 +103,7 @@ def test_preview_then_confirmation_saves_one_draft_and_audit_without_stock_chang
         assert order.items[0].resolved_recipe_id is None
         assert order.allergen_concerns == []
         assert order.collection_kind == "before"
-        audit = db.scalars(select(AuditEntry)).one()
+        audit = db.scalars(select(AuditEntry).where(AuditEntry.action == "order.draft_created")).one()
         assert audit.action == "order.draft_created"
         assert audit.after_data["items"][0]["quantity"] == 24
         assert audit.after_data["allergen_concerns"] == []
@@ -113,7 +114,7 @@ def test_ai_failure_stops_at_three_calls_and_writes_nothing(environment):
     flow, customer, client = service(environment)
     client.default_reply = "malformed"
     with pytest.raises(AIOperationFailed):
-        flow.preview(customer, "request")
+        flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")
     assert len(client.calls) == 3
     with flow.store.unit_of_work() as db:
         assert db.scalar(select(func.count()).select_from(Order)) == 0
@@ -122,13 +123,13 @@ def test_ai_failure_stops_at_three_calls_and_writes_nothing(environment):
 def test_recovers_from_invalid_output_and_rejects_boolean_quantity(environment):
     flow, customer, client = service(environment)
     client.replies = [json.dumps(valid_data() | {"items": [{"product": "Vanilla cupcake", "quantity": True}]}), "bad"]
-    assert flow.preview(customer, "request")["confirmationToken"]
+    assert flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")["confirmationToken"]
     assert len(client.calls) == 3
 
 
 def test_tampered_or_cross_customer_token_is_rejected(environment):
     flow, customer, _ = service(environment)
-    token = flow.preview(customer, "request")["confirmationToken"]
+    token = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")["confirmationToken"]
     for identity, value in [(customer, token + "x"), (CustomerIdentity(uuid.uuid4(), uuid.uuid4(), "other"), token)]:
         with pytest.raises(IntakeError):
             flow.confirm(identity, value)
@@ -136,7 +137,7 @@ def test_tampered_or_cross_customer_token_is_rejected(environment):
 
 def test_expired_token_is_rejected(environment, monkeypatch):
     flow, customer, _ = service(environment)
-    token = flow.preview(customer, "request")["confirmationToken"]
+    token = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")["confirmationToken"]
     monkeypatch.setattr("app.sales.intake.time.time", lambda: 9999999999)
     with pytest.raises(IntakeError):
         flow.confirm(customer, token)
@@ -144,7 +145,7 @@ def test_expired_token_is_rejected(environment, monkeypatch):
 
 def test_save_failure_rolls_back_order_and_audit(environment, monkeypatch):
     flow, customer, _ = service(environment)
-    token = flow.preview(customer, "request")["confirmationToken"]
+    token = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")["confirmationToken"]
     original = flow.store.commit
     def failed(*args, **kwargs):
         original(*args, **kwargs)
@@ -154,7 +155,7 @@ def test_save_failure_rolls_back_order_and_audit(environment, monkeypatch):
         flow.confirm(customer, token)
     with flow.store.unit_of_work() as db:
         assert db.scalar(select(func.count()).select_from(Order)) == 0
-        assert db.scalar(select(func.count()).select_from(AuditEntry)) == 0
+        assert db.scalar(select(func.count()).select_from(AuditEntry).where(AuditEntry.action == "order.draft_created")) == 0
 
 
 def make_client(environment):
@@ -169,14 +170,14 @@ def test_http_requires_identity_and_csrf(environment):
     app, client, identity = make_client(environment)
     assert client.get("/api/orders/mine").status_code == 401
     app.dependency_overrides[current_customer] = lambda: identity
-    assert client.post("/api/order-requests", json={"message": "request"}).status_code == 403
+    assert client.post("/api/order-requests", json={"message": "24 vanilla cupcakes, no allergy concerns"}).status_code == 403
 
 
 def test_http_two_steps_and_own_orders(environment):
     app, client, identity = make_client(environment)
     app.dependency_overrides[current_customer] = lambda: identity
     app.dependency_overrides[check_csrf] = lambda: None
-    preview = client.post("/api/order-requests", json={"message": "request"})
+    preview = client.post("/api/order-requests", json={"message": "24 vanilla cupcakes, no allergy concerns"})
     assert preview.status_code == 200
     assert client.get("/api/orders/mine").json() == {"orders": []}
     saved = client.post("/api/order-requests/confirm", json={"confirmationToken": preview.json()["confirmationToken"]})
@@ -192,7 +193,7 @@ def test_http_save_failure_is_not_success(environment, monkeypatch):
     app, client, identity = make_client(environment)
     app.dependency_overrides[current_customer] = lambda: identity
     app.dependency_overrides[check_csrf] = lambda: None
-    preview = client.post("/api/order-requests", json={"message": "request"}).json()
+    preview = client.post("/api/order-requests", json={"message": "24 vanilla cupcakes, no allergy concerns"}).json()
     def failed(*args, **kwargs):
         raise OperationalError("write", {}, Exception("private DB details"))
     monkeypatch.setattr(environment[0], "commit", failed)
@@ -200,3 +201,16 @@ def test_http_save_failure_is_not_success(environment, monkeypatch):
     assert response.status_code == 503
     assert "private DB" not in response.text
     assert "orderId" not in response.json()
+
+
+def test_hallucinated_no_allergies_cannot_complete_missing_disclosure(environment):
+    flow, customer, _ = service(environment)
+    result = flow.preview(customer, "24 vanilla birthday cupcakes tomorrow at noon")
+    assert result["summary"]["allergen_concerns"] is None
+    assert result["confirmationToken"] is None
+
+
+def test_unrelated_quote_does_not_establish_no_allergies(environment):
+    data = valid_data() | {"allergen_statement": "24 vanilla cupcakes"}
+    flow, customer, _ = service(environment, data)
+    assert flow.preview(customer, "24 vanilla cupcakes")["confirmationToken"] is None

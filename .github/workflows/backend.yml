@@ -9,7 +9,7 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:17
@@ -24,8 +24,8 @@ jobs:
     env:
       BAKEFLOW_TEST_DATABASE_URL: postgresql+psycopg://bakeflow_test:bakeflow_test@127.0.0.1:5432/bakeflow_test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
           cache: pip

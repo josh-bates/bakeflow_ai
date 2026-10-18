@@ -26,3 +26,6 @@ frontend/dist/
 frontend/coverage/
 venv/
 .env
+
+# Local PostgreSQL demo data
+.local/
