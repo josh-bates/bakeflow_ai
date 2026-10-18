@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import SecretStr, field_validator
@@ -27,6 +28,7 @@ class Settings(BaseSettings):
     )
 
     environment: str = "development"
+    llm_mode: Literal["mock", "live"] = "mock"
     # SQLAlchemy URL, e.g. postgresql+psycopg://user:password@db:5432/bakeflow.
     # None means "no database": the app still starts, readiness reports 503.
     database_url: str | None = None

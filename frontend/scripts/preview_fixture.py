@@ -51,7 +51,12 @@ class Handler(SimpleHTTPRequestHandler):
             return self.reply({}, 422)
         if not isinstance(body, dict) or not isinstance(body.get('message'), str) or not body['message'].strip():
             return self.reply({}, 422)
-        return self.reply({'requestId': 'DEMO-REQUEST', 'message': 'Test fixture only: your input reached the preview server. No order was saved or confirmed.'}, 202)
+        return self.reply({
+            'summary': {'items': [], 'required_at': None, 'collection_kind': 'at',
+                        'allergen_concerns': None, 'budget': None},
+            'issues': ['This visual preview cannot interpret or save orders. Use the BAKE-11 backend demo for the complete flow.'],
+            'confirmationToken': None,
+        })
 
 
 print(f'UI TEST FIXTURE ONLY ({args.role}): http://127.0.0.1:{args.port}', flush=True)

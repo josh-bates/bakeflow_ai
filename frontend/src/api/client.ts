@@ -9,7 +9,15 @@ export type Order = {
   status: string;
   requiredAt: string | null;
 };
-export type Submission = { requestId: string; message: string };
+export type OrderSummary = {
+  items: { product: string; quantity: number | null; flavour: string | null; theme: string | null; customisation: string | null }[];
+  required_at: string | null;
+  collection_kind: "at" | "before";
+  allergen_concerns: string[] | null;
+  budget: string | null;
+};
+export type Submission = { summary: OrderSummary; issues: string[]; confirmationToken: string | null };
+export type DraftReceipt = { orderId: string; status: "Draft" };
 
 export class ApiError extends Error {
   constructor(
@@ -40,6 +48,11 @@ async function request(path: string, init: RequestInit = {}): Promise<unknown> {
       422: "The request could not be accepted. Please check your details.",
       429: "Too many requests. Please wait before trying again.",
     };
+    if ([409, 503].includes(response.status)) {
+      const data = await response.json().catch(() => null);
+      if (record(data) && typeof data.detail === "string")
+        throw new ApiError(response.status, data.detail);
+    }
     throw new ApiError(
       response.status,
       messages[response.status] ??
@@ -116,11 +129,27 @@ export const api = {
     });
     if (
       !record(value) ||
-      typeof value.requestId !== "string" ||
-      !value.requestId ||
-      typeof value.message !== "string"
+      !record(value.summary) || !Array.isArray(value.summary.items) ||
+      !value.summary.items.every((i) => record(i) && typeof i.product === "string" &&
+        (i.quantity === null || Number.isInteger(i.quantity)) &&
+        [i.flavour, i.theme, i.customisation].every(v => v === null || typeof v === "string")) ||
+      !(value.summary.required_at === null || (typeof value.summary.required_at === "string" && Number.isFinite(Date.parse(value.summary.required_at)))) ||
+      !["at", "before"].includes(String(value.summary.collection_kind)) ||
+      !(value.summary.allergen_concerns === null || (Array.isArray(value.summary.allergen_concerns) && value.summary.allergen_concerns.every(v => typeof v === "string"))) ||
+      !(value.summary.budget === null || typeof value.summary.budget === "string") ||
+      !Array.isArray(value.issues) || !value.issues.every(v => typeof v === "string") ||
+      !(value.confirmationToken === null || typeof value.confirmationToken === "string")
     )
       return invalid();
     return value as Submission;
+  },
+  async confirm(confirmationToken: string, csrfToken: string): Promise<DraftReceipt> {
+    const value = await request("/order-requests/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ confirmationToken }),
+    });
+    if (!record(value) || typeof value.orderId !== "string" || !value.orderId || value.status !== "Draft") return invalid();
+    return value as DraftReceipt;
   },
 };

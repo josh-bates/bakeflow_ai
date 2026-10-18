@@ -51,44 +51,60 @@ it("loads only the signed-in customer’s orders and never supplies a customer i
   );
 });
 
-it("submits text to the backend with CSRF and reports receipt without claiming a confirmed order", async () => {
+const preview = {
+  summary: { items: [{ product: "Vanilla cupcake", quantity: 24, flavour: "vanilla", theme: "birthday", customisation: null }], required_at: "2027-10-02T12:00:00+10:00", collection_kind: "before", allergen_concerns: [], budget: null },
+  issues: [], confirmationToken: "signed-summary",
+};
+
+it("shows a summary without saving until the customer confirms", async () => {
   const user = userEvent.setup();
   fetchMock.mockImplementation(async (url: string) =>
-    url === "/api/session"
-      ? response(session())
-      : url === "/api/order-requests"
-        ? response(
-            {
-              requestId: "REQ-1",
-              message: "Please review the details with the bakery.",
-            },
-            202,
-          )
-        : response({ orders: [] }),
-  );
+    url === "/api/session" ? response(session()) :
+    url === "/api/order-requests" ? response(preview) :
+    url === "/api/order-requests/confirm" ? response({ orderId: "ORD-1", status: "Draft" }) : response({ orders: [] }));
   render(<App />);
-  await user.type(
-    await screen.findByLabelText("What would you like to order?"),
-    "12 vanilla cupcakes",
-  );
+  await user.type(await screen.findByLabelText("What would you like to order?"), "24 vanilla cupcakes");
   await user.click(screen.getByRole("button", { name: /Send order request/ }));
-  expect(
-    await screen.findByText("Request received · REQ-1"),
-  ).toBeInTheDocument();
-  expect(fetchMock).toHaveBeenCalledWith(
-    "/api/order-requests",
-    expect.objectContaining({
-      method: "POST",
-      body: JSON.stringify({ message: "12 vanilla cupcakes" }),
-      headers: expect.objectContaining({
-        "X-CSRF-Token": "test-csrf",
-        "Idempotency-Key": expect.any(String),
-      }),
-    }),
-  );
-  expect(screen.getByLabelText("What would you like to order?")).toHaveValue(
-    "",
-  );
+  expect(await screen.findByText("Your order summary")).toBeInTheDocument();
+  expect(screen.getByText("No concerns stated by you")).toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/order-requests/confirm")).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Confirm and save draft" }));
+  expect(await screen.findByText("Draft saved · ORD-1")).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith("/api/order-requests/confirm", expect.objectContaining({
+    body: JSON.stringify({ confirmationToken: "signed-summary" }),
+    headers: expect.objectContaining({ "X-CSRF-Token": "test-csrf" }),
+  }));
+});
+
+it("blocks incomplete summaries and lets the customer correct the request", async () => {
+  const user = userEvent.setup();
+  fetchMock.mockImplementation(async (url: string) => url === "/api/session" ? response(session()) :
+    url === "/api/order-requests" ? response({ ...preview, issues: ["Please provide allergen information."], confirmationToken: null }) : response({ orders: [] }));
+  render(<App />);
+  await user.type(await screen.findByLabelText("What would you like to order?"), "24 cupcakes");
+  await user.click(screen.getByRole("button", { name: /Send order request/ }));
+  expect(await screen.findByText("Please provide allergen information.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Confirm and save draft" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Correct my request" }));
+  expect(screen.queryByText("Your order summary")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("What would you like to order?")).toHaveValue("24 cupcakes");
+});
+
+it("retains a summary after save failure and retries the same confirmation", async () => {
+  const user = userEvent.setup();
+  fetchMock.mockImplementation(async (url: string) => url === "/api/session" ? response(session()) :
+    url === "/api/order-requests" ? response(preview) :
+    url === "/api/order-requests/confirm" ? response({}, 503) : response({ orders: [] }));
+  render(<App />);
+  await user.type(await screen.findByLabelText("What would you like to order?"), "24 cupcakes");
+  await user.click(screen.getByRole("button", { name: /Send order request/ }));
+  await user.click(await screen.findByRole("button", { name: "Confirm and save draft" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Saving has not been confirmed");
+  expect(screen.queryByText(/Draft saved/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Confirm and save draft" }));
+  const calls = fetchMock.mock.calls.filter(([url]) => url === "/api/order-requests/confirm");
+  expect(calls).toHaveLength(2);
+  expect(calls[0][1].body).toBe(calls[1][1].body);
 });
 
 it("retains text and the same idempotency key after a failed submission", async () => {
@@ -107,7 +123,7 @@ it("retains text and the same idempotency key after a failed submission", async 
   );
   await user.click(screen.getByRole("button", { name: /Send order request/ }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Receipt was not confirmed",
+    "No draft was saved",
   );
   expect(screen.getByLabelText("What would you like to order?")).toHaveValue(
     "Birthday cake",

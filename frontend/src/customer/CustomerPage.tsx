@@ -5,6 +5,7 @@ import {
   type Order,
   type Session,
   type Submission,
+  type DraftReceipt,
 } from "../api/client";
 import { Notice } from "../components/Notice";
 
@@ -23,6 +24,7 @@ export function CustomerPage({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Submission | null>(null);
+  const [saved, setSaved] = useState<DraftReceipt | null>(null);
   const pending = useRef(false);
   const attempt = useRef<{ message: string; key: string } | null>(null);
 
@@ -60,6 +62,7 @@ export function CustomerPage({
     setSending(true);
     setError("");
     setResult(null);
+    setSaved(null);
     // Reuse the key after an uncertain response so a retry cannot create a second intake.
     if (attempt.current?.message !== text)
       attempt.current = { message: text, key: crypto.randomUUID() };
@@ -70,15 +73,33 @@ export function CustomerPage({
         attempt.current.key,
       );
       setResult(response);
-      setMessage("");
       attempt.current = null;
-      setReload((value) => value + 1);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) onExpired();
       else
         setError(
-          `${(e as Error).message} Receipt was not confirmed. Your text has been kept; retrying the same text reuses its request reference.`,
+          `${(e as Error).message} No draft was saved. Your text has been kept so you can try again.`,
         );
+    } finally {
+      pending.current = false;
+      setSending(false);
+    }
+  }
+
+  async function confirm() {
+    if (pending.current || !result?.confirmationToken || result.issues.length) return;
+    pending.current = true;
+    setSending(true);
+    setError("");
+    try {
+      const receipt = await api.confirm(result.confirmationToken, session.csrfToken);
+      setSaved(receipt);
+      setResult(null);
+      setMessage("");
+      setReload(value => value + 1);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onExpired();
+      else setError(`${(e as Error).message} Saving has not been confirmed. Retry confirmation to check the same order.`);
     } finally {
       pending.current = false;
       setSending(false);
@@ -109,8 +130,8 @@ export function CustomerPage({
           <div className="section-number">01 / MADE FOR YOU</div>
           <h2 id="request-title">Request a custom order</h2>
           <p className="muted">
-            Include the product, quantity, flavours and when you need it. Add
-            any customisation or allergen questions.
+            Include the product, quantity, flavours and collection date and time.
+            State any allergy concerns, or explicitly say you have none.
           </p>
           </div>
           <form onSubmit={submit}>
@@ -124,27 +145,47 @@ export function CustomerPage({
               onChange={(e) => {
                 setMessage(e.target.value);
                 setResult(null);
+                setSaved(null);
                 setError("");
               }}
-              placeholder="For example: 12 vanilla cupcakes for a birthday on 25 October at 2 pm, with blue decorations."
+              placeholder="24 vanilla birthday cupcakes for collection on 2 Oct before 12:00, no allergy concerns"
               aria-describedby="request-help"
             />
             <p id="request-help" className="field-help">
-              We’ll review your request before confirming the details and price. No payment is taken here.
+              Review your summary before saving a draft. A draft is not a confirmed sale and no payment is taken.
             </p>
             {error && <Notice error>{error}</Notice>}
-            {result && (
-              <Notice>
-                <strong>Request received · {result.requestId}</strong>
-                <br />
-                {result.message}
-              </Notice>
-            )}
+            {saved && <Notice><strong>Draft saved · {saved.orderId}</strong><br />Your requirements are saved. This is not a confirmed sale.</Notice>}
             <button className="primary" type="submit" disabled={sending}>
               {sending ? "Sending request…" : "Send order request"}{" "}
               <span aria-hidden="true">↗</span>
             </button>
           </form>
+          {session.mode === "mock" && !result && <p className="field-help">Offline demo: use the example in the text box. Mock mode supports preset examples only.</p>}
+          {result && (
+            <section className="order-summary" aria-labelledby="summary-title" aria-live="polite">
+              <p className="eyebrow">REVIEW YOUR REQUEST</p>
+              <h3 id="summary-title">Your order summary</h3>
+              <ul>{result.summary.items.map((item, index) => <li key={index}>
+                <strong>{item.quantity ?? "Quantity needed"} × {item.product}</strong>
+                {item.flavour && <p>Flavour: {item.flavour}</p>}
+                {item.theme && <p>Theme: {item.theme}</p>}
+                {item.customisation && <p>Customisation: {item.customisation}</p>}
+              </li>)}</ul>
+              <dl>
+                <dt>Collection ({result.summary.collection_kind === "before" ? "before" : "at"})</dt>
+                <dd>{result.summary.required_at ? new Intl.DateTimeFormat("en-AU", { dateStyle: "full", timeStyle: "short", timeZone: "Australia/Sydney" }).format(new Date(result.summary.required_at)) : "Not provided"} · Australia/Sydney</dd>
+                <dt>Allergen concerns</dt><dd>{result.summary.allergen_concerns === null ? "Not provided" : result.summary.allergen_concerns.length ? result.summary.allergen_concerns.join(", ") : "No concerns stated by you"}</dd>
+                <dt>Budget (AUD)</dt><dd>{result.summary.budget ?? "Not specified"}</dd>
+              </dl>
+              <p className="field-help">Check the full date and year. If you omitted a year, the next occurrence is shown. No draft has been saved yet.</p>
+              {result.issues.length > 0 && <Notice error><ul>{result.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></Notice>}
+              <div className="hero-actions">
+                <button className="secondary" disabled={sending} onClick={() => { setResult(null); setError(""); document.getElementById("order-request")?.focus(); }}>Correct my request</button>
+                <button className="primary" disabled={sending || !result.confirmationToken || result.issues.length > 0} onClick={confirm}>{sending ? "Saving draft…" : "Confirm and save draft"}</button>
+              </div>
+            </section>
+          )}
         </section>
       </div>
       <section className="card orders" aria-labelledby="orders-title">
@@ -170,7 +211,7 @@ export function CustomerPage({
             <span aria-hidden="true">◇</span>
             <h3>No orders yet</h3>
             <p>
-              Your orders will appear here once the bakery has reviewed your request.
+              Your draft orders will appear here after you confirm the summary.
             </p>
           </div>
         ) : (
