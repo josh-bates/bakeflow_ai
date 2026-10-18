@@ -1,0 +1,40 @@
+# Local stack (BAKE-6; architecture §7.1): the app and PostgreSQL only.
+# First copy .env.example to .env, then: docker compose up --build -d
+name: bakeflow
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bakeflow}
+      POSTGRES_USER: ${POSTGRES_USER:-bakeflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set POSTGRES_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # No published port: only the app reaches the database.
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      BAKEFLOW_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bakeflow}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-bakeflow}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # Loopback only: the HTTP demo must not be reachable from other devices [R15].
+      - "127.0.0.1:${BAKEFLOW_APP_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  db-data:
