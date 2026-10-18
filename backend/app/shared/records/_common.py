@@ -97,6 +97,8 @@ class RecordMixin:
     __record_type__: str
     __record_id__: str
     __versioning__: Versioning = Versioning.NONE
+    # Row-versioned records only: columns that may change on a saved version.
+    __mutable_fields__: frozenset[str] = frozenset()
 
     @property
     def record_id(self) -> uuid.UUID:
