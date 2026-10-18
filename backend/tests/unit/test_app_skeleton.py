@@ -4,12 +4,22 @@ Run from ``backend/``: ``pytest tests/unit/test_app_skeleton.py``.
 No PostgreSQL is needed; readiness is exercised with SQLite URLs.
 """
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.config import Settings
 from app.main import create_app
+
+
+@pytest.fixture(autouse=True)
+def clean_bakeflow_environment(monkeypatch):
+    """Ignore BAKEFLOW_* variables set in the developer's shell or container."""
+    for name in list(os.environ):
+        if name.upper().startswith("BAKEFLOW_"):
+            monkeypatch.delenv(name)
 
 
 def make_settings(**values) -> Settings:
