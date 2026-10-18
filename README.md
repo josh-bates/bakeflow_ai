@@ -71,15 +71,25 @@ pytest
 
 Unit tests need no database. Dependencies are pinned exactly in `backend/requirements.txt` (runtime) and `backend/requirements-dev.txt` (tests); change pins deliberately in their own PR.
 
-### Backend layout
+### Project layout
+
+Each module is a package inside one application, so all four members can work in parallel (architecture §6.1). Put new code in the package that owns it, and import other modules only through `shared/`.
 
 | Path | Contents |
 | --- | --- |
-| `backend/app/main.py` | FastAPI app: `/api/health`, `/api/health/ready`, and the built React app when `frontend/dist` exists |
+| `backend/app/main.py` | FastAPI app: `/api/health`, `/api/health/ready`, and the built UI when `frontend/dist` exists |
 | `backend/app/config.py` | Settings from `BAKEFLOW_*` environment variables |
 | `backend/app/db/` | SQLAlchemy declarative base, engine and session factory |
+| `backend/app/shared/` | Shared model and services: records, `RecordRef`, events, task contracts, approvals, record store (BAKE-7) |
+| `backend/app/workflow/` | `WorkflowService` and transition tables (BAKE-8); architecture §6.1 calls it `coordination/` |
+| `backend/app/llm/` | LLM gateway and Mock client (BAKE-9); architecture §6.1 calls it `ai_support/` |
+| `backend/app/sales/` | Sales and Customer Service: UC-01, UC-02 |
+| `backend/app/inventory_production/` | Inventory and Production: UC-03, UC-04, IP-01–IP-05 |
+| `backend/app/pricing_bookkeeping/` | Pricing and Bookkeeping: UC-05, UC-06 |
+| `backend/app/marketing/` | Marketing: UC-07, UC-08 |
 | `backend/alembic/` | Migrations; the database URL comes from `BAKEFLOW_DATABASE_URL` |
-| `backend/app/<module>/` | Business and support modules, e.g. `pricing_bookkeeping/` |
+| `backend/tests/` | pytest suites |
+| `frontend/` | UI: React + TypeScript + Vite browser shell (BAKE-10, not created yet); its build output `frontend/dist` is served by the backend |
 | `Dockerfile`, `compose.yaml` | One app image plus PostgreSQL (architecture §7.1) |
 
 
