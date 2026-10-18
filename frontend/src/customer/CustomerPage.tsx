@@ -89,14 +89,14 @@ export function CustomerPage({
     <>
       <section className="dessert-hero" aria-labelledby="hero-title">
         <div className="hero-copy">
-          <p className="eyebrow">BAKEFLOW / CAKES & CELEBRATIONS</p>
-          <h1 id="hero-title">A little indulgence.<br /><em>A special occasion.</em></h1>
-          <p>Custom cakes and cupcakes, made around your occasion. Tell us what you have in mind.</p>
+          <p className="eyebrow">BAKEFLOW / THE JOY OF BAKING</p>
+          <h1 id="hero-title">Thoughtfully baked.<br /><em>For every occasion.</em></h1>
+          <p>Something freshly baked for everyday moments and special occasions. Tell us what you have in mind.</p>
           <div className="hero-actions">
             <button className="primary" onClick={() => { document.getElementById('request-title')?.scrollIntoView({ block: 'start' }); document.getElementById('order-request')?.focus({ preventScroll: true }); }}>Start a custom order <span aria-hidden="true">↗</span></button>
             <button className="text-button" onClick={() => { document.getElementById('orders-title')?.scrollIntoView({ block: 'start' }); document.getElementById('orders-title')?.focus({ preventScroll: true }); }}>View my orders <span aria-hidden="true">→</span></button>
           </div>
-          <p className="hero-note">Your occasion. Your details. Something thoughtfully made.</p>
+          <p className="hero-note">Everyday favourites. Special moments. Made for you.</p>
         </div>
         <figure className="hero-photo">
           <img src="/images/chocolate-cake.jpg" alt="Layered chocolate cake with red berries and cocoa on a white ceramic plate" width="1600" height="900" fetchPriority="high" />

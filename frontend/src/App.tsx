@@ -75,7 +75,7 @@ export function App() {
           <span className="brand-mark" aria-hidden="true">
             B
           </span>
-          BakeFlow<span className="brand-small">CAKES & OCCASIONS</span>
+          BakeFlow<span className="brand-small">BAKERY & MORE</span>
         </a>
         {session && (
           <div className="identity">
