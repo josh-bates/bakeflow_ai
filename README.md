@@ -4,7 +4,7 @@ An AI-assisted back-office system for a home-based bakery, developed for **ELEC5
 
 BakeFlow AI helps a bakery owner manage custom cake and cupcake enquiries, orders, ingredient stock, production, quotations, bookkeeping and marketing. Four specialist AI agents interpret requests and propose outcomes; deterministic services validate business data, perform calculations and coordinate workflows. The owner retains approval over important decisions.
 
-**Status:** Stage Two repository preparation only. This initial snapshot contains documentation and reference materials. Application code, dependencies, deployment configuration and automated workflows have not been implemented. The framework, SQL database engine and LLM provider remain undecided, as specified in Stage One.
+**Status:** Stage Two implementation in progress. The working stack (architecture §3, OD-1–OD-3) is Python with FastAPI, SQLAlchemy and Alembic, PostgreSQL via Docker Compose, and a React + TypeScript + Vite frontend served by the backend. The backend skeleton runs locally; the frontend and the LLM provider are not in place yet.
 
 ## Planned capabilities
 
@@ -28,7 +28,7 @@ These are the report's design responsibilities, not a claim about completed impl
 - [Original Stage One report](docs/reference/stage-1-report.pdf)
 - [Original Stage Two marking criteria](docs/reference/stage-2-marking-criteria.pdf)
 
-Jira will hold the live backlog, sprint commitments, estimates and collaboration evidence. GitHub will hold version history and reviewed changes. No Jira project, sprint or integration is configured in this snapshot.
+Jira (project BAKE) holds the live backlog, sprint commitments, estimates and collaboration evidence. GitHub holds version history and reviewed changes.
 
 ## Scope
 
@@ -41,6 +41,56 @@ GitHub repository: [josh-bates/bakeflow_ai](https://github.com/josh-bates/bakefl
 > ELEC5620 Stage Two: AI-assisted bakery operations with four specialist agents, deterministic workflows and owner approvals.
 
 See [repository setup and Jira handoff](docs/repository-setup.md).
+
+## Run locally
+
+You need Docker Desktop (Compose v2). To run the backend tests without Docker you need Python 3.11 or newer; the image uses 3.13.
+
+### App and database
+
+```bash
+cp .env.example .env    # then set your own POSTGRES_PASSWORD
+docker compose up --build -d
+docker compose ps       # app and db should both become "healthy"
+```
+
+- <http://localhost:8000/api/health/ready> returns `{"status":"ok","database":"ok"}` once the app can reach PostgreSQL.
+- <http://localhost:8000/docs> shows the generated API documentation.
+- The app applies Alembic migrations when it starts. The database is reachable only from the app container, and the app port is bound to `127.0.0.1`.
+- `docker compose logs app` shows the app log. `docker compose down` stops everything; add `-v` to also delete the database volume.
+
+### Backend tests
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate    # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
+pytest
+```
+
+Unit tests need no database. Dependencies are pinned exactly in `backend/requirements.txt` (runtime) and `backend/requirements-dev.txt` (tests); change pins deliberately in their own PR.
+
+### Project layout
+
+Each module is a package inside one application, so all four members can work in parallel (architecture §6.1). Put new code in the package that owns it, and import other modules only through `shared/`.
+
+| Path | Contents |
+| --- | --- |
+| `backend/app/main.py` | FastAPI app: `/api/health`, `/api/health/ready`, and the built UI when `frontend/dist` exists |
+| `backend/app/config.py` | Settings from `BAKEFLOW_*` environment variables |
+| `backend/app/db/` | SQLAlchemy declarative base, engine and session factory |
+| `backend/app/shared/` | Shared model and services: records, `RecordRef`, events, task contracts, approvals, record store (BAKE-7) |
+| `backend/app/workflow/` | `WorkflowService` and transition tables (BAKE-8); architecture §6.1 calls it `coordination/` |
+| `backend/app/llm/` | LLM gateway and Mock client (BAKE-9); architecture §6.1 calls it `ai_support/` |
+| `backend/app/sales/` | Sales and Customer Service: UC-01, UC-02 |
+| `backend/app/inventory_production/` | Inventory and Production: UC-03, UC-04, IP-01–IP-05 |
+| `backend/app/pricing_bookkeeping/` | Pricing and Bookkeeping: UC-05, UC-06 |
+| `backend/app/marketing/` | Marketing: UC-07, UC-08 |
+| `backend/alembic/` | Migrations; the database URL comes from `BAKEFLOW_DATABASE_URL` |
+| `backend/tests/` | pytest suites |
+| `frontend/` | UI: React + TypeScript + Vite browser shell (BAKE-10, not created yet); its build output `frontend/dist` is served by the backend |
+| `Dockerfile`, `compose.yaml` | One app image plus PostgreSQL (architecture §7.1) |
 
 
 ## LLM provider configuration

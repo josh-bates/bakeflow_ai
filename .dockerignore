@@ -1,0 +1,13 @@
+# Keep secrets, local state and unused files out of the image build context.
+.git
+.github
+.env
+.env.*
+docs
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.venv
+**/venv
+**/node_modules
+backend/tests
