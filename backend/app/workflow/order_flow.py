@@ -8,6 +8,8 @@ the UC-01, UC-05 and UC-04 flows and recorded here as the values BAKE-8 uses.
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from collections.abc import Callable
+from typing import Any
 
 from enum import Enum
 
@@ -33,6 +35,18 @@ ALLOWED_MOVES: dict[OrderStage, frozenset[OrderStage]] = {
     OrderStage.COMPLETED: frozenset(),
     OrderStage.CANCELLED: frozenset(),
 }
+
+# One business AI operation gets the initial attempt plus
+# WorkflowService.maxRetries = 2 from the Stage 1 class model.
+MAX_ATTEMPTS = 3
+
+
+class AIOperationFailed(Exception):
+    """Raised when an AI operation gave no usable result within the budget."""
+
+    def __init__(self, attempts: int):
+        self.attempts = attempts
+        super().__init__(f"No usable AI result after {attempts} attempts")
 
 
 class TransitionRejected(Exception):
@@ -71,7 +85,6 @@ class AuditEntry:
     previous_state: str
     resulting_state: str
 
-
 class WorkflowService:
     """Deterministic control for the main order flow (BAKE-8)."""
 
@@ -96,14 +109,51 @@ class WorkflowService:
         if not is_allowed(current, requested):
             raise TransitionRejected(current, requested)
 
+        self._record(subject, actor, event_type, current, requested)
+        return requested
+
+    def run_ai_task(
+        self,
+        subject: RecordRef,
+        stage: OrderStage,
+        attempt_task: Callable[[], Any],
+        is_usable: Callable[[Any], bool],
+        *,
+        actor: str,
+        event_type: str,
+    ) -> Any:
+        """Run one AI operation, retrying until usable or the budget runs out.
+
+        The budget is owned here, not in the gateway or the agent, so a single
+        business operation never exceeds ``MAX_ATTEMPTS`` calls in total.
+        Both malformed output and output that fails business validation count.
+        """
+        for _ in range(MAX_ATTEMPTS):
+            try:
+                result = attempt_task()
+            except Exception:
+                continue
+            if is_usable(result):
+                return result
+
+        self._record(subject, actor, f"{event_type}Failed", stage, stage)
+        raise AIOperationFailed(MAX_ATTEMPTS)
+
+    def _record(
+        self,
+        subject: RecordRef,
+        actor: str,
+        event_type: str,
+        previous: OrderStage,
+        resulting: OrderStage,
+    ) -> None:
         self._audit_log.append(
             AuditEntry(
                 timestamp=datetime.now(timezone.utc),
                 subject=subject,
                 actor=actor,
                 event_type=event_type,
-                previous_state=current.value,
-                resulting_state=requested.value,
+                previous_state=previous.value,
+                resulting_state=resulting.value,
             )
         )
-        return requested

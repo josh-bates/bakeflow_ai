@@ -9,6 +9,7 @@ from app.workflow.order_flow import (
     RecordRef,
     TransitionRejected,
     WorkflowService,
+    AIOperationFailed,
 )
 
 ORDER = RecordRef(record_type="Order", record_id="O1", version=1)
@@ -82,3 +83,70 @@ def test_audit_entry_records_both_states():
     assert entry.resulting_state == "Quoted"
     assert entry.actor == "owner"
     assert entry.subject == ORDER
+
+
+def test_always_failing_task_gets_exactly_three_attempts():
+    service = WorkflowService()
+    attempts = []
+
+    def attempt():
+        attempts.append(1)
+        return "unusable"
+
+    with pytest.raises(AIOperationFailed):
+        service.run_ai_task(
+            ORDER, OrderStage.DRAFT, attempt, lambda r: False,
+            actor="workflow", event_type="generateContent",
+        )
+
+    assert len(attempts) == 3
+
+
+def test_crashing_task_also_burns_attempts():
+    service = WorkflowService()
+    attempts = []
+
+    def attempt():
+        attempts.append(1)
+        raise RuntimeError("malformed response")
+
+    with pytest.raises(AIOperationFailed):
+        service.run_ai_task(
+            ORDER, OrderStage.DRAFT, attempt, lambda r: True,
+            actor="workflow", event_type="generateContent",
+        )
+
+    assert len(attempts) == 3
+
+
+def test_usable_result_stops_retrying():
+    service = WorkflowService()
+    attempts = []
+
+    def attempt():
+        attempts.append(1)
+        return "good" if len(attempts) == 2 else "bad"
+
+    result = service.run_ai_task(
+        ORDER, OrderStage.DRAFT, attempt, lambda r: r == "good",
+        actor="workflow", event_type="generateContent",
+    )
+
+    assert result == "good"
+    assert len(attempts) == 2
+
+
+def test_failure_is_logged_and_the_order_does_not_move():
+    service = WorkflowService()
+
+    with pytest.raises(AIOperationFailed):
+        service.run_ai_task(
+            ORDER, OrderStage.DRAFT, lambda: "bad", lambda r: False,
+            actor="workflow", event_type="generateContent",
+        )
+
+    assert len(service.audit_log) == 1
+    entry = service.audit_log[0]
+    assert entry.event_type == "generateContentFailed"
+    assert entry.previous_state == "Draft"
+    assert entry.resulting_state == "Draft"
