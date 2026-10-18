@@ -20,7 +20,9 @@ from app.shared.records import (
     OrderItem,
     OrderStatus,
     Product,
+    ProductionScheduleVersion,
     Quote,
+    ShoppingList,
     Versioning,
 )
 from app.shared.store import RecordValidationError, _normalise, _snapshot, record_class
@@ -175,3 +177,32 @@ def test_normalise_checks_unit_cost_at_four_decimals():
     _normalise(InventoryItem(unit_cost=Decimal("0.003")))
     with pytest.raises(RecordValidationError, match="unit_cost"):
         _normalise(InventoryItem(unit_cost=Decimal("0.00305")))
+
+
+@pytest.mark.parametrize(
+    ("record", "field"),
+    [
+        (lambda: OrderItem(quantity=Decimal("1.5")), "quantity"),  # would be rounded to 2
+        (lambda: OrderItem(quantity=2.0), "quantity"),
+        (lambda: OrderItem(quantity=True), "quantity"),
+        (lambda: Order(version=2**31), "version"),
+        (lambda: Quote(requires_manual_review=1), "requires_manual_review"),
+        (lambda: Order(status=7), "status"),
+        (lambda: Product(name="x" * 201), "name"),
+        (lambda: Product(name="nul\x00byte"), "name"),
+        (lambda: Order(customer_id=str(uuid.uuid4())), "customer_id"),
+        (lambda: ProductionScheduleVersion(start_date=datetime(2026, 10, 2, tzinfo=UTC)), "start_date"),
+        (lambda: ShoppingList(requirements={"flour": Decimal("600")}), "requirements"),
+    ],
+)
+def test_normalise_rejects_values_of_the_wrong_type_or_size(record, field):
+    with pytest.raises(RecordValidationError, match=field):
+        _normalise(record())
+
+
+def test_normalise_stores_json_in_its_json_form():
+    shopping_list = ShoppingList(requirements={"flour": ("600.000",)}, shortages={})
+
+    _normalise(shopping_list)
+
+    assert shopping_list.requirements == {"flour": ["600.000"]}

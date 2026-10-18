@@ -35,6 +35,7 @@ Errors carry the stable codes from architecture §6.2: ``STALE_VERSION`` and
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -44,9 +45,10 @@ from enum import Enum
 from functools import cache
 from typing import Any, TypeVar
 
-from sqlalchemy import DateTime, Numeric, event, inspect, select
+from sqlalchemy import Boolean, Date, DateTime, Integer, Numeric, String, Uuid, event, inspect, select
 from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
+from sqlalchemy.types import JSON
 
 from app.db.base import Base
 from app.shared.records import AuditEntry, ConstraintGuard, Versioning
@@ -58,6 +60,8 @@ R = TypeVar("R", bound=RecordMixin)
 GUARD_BAKERY_ID = 1
 # session.info key: objects that commit() is currently allowed to flush.
 _AUTHORISED = "bakeflow.authorised_writes"
+# PostgreSQL INTEGER range.
+_INT_MIN, _INT_MAX = -(2**31), 2**31 - 1
 
 
 class StoreError(Exception):
@@ -211,6 +215,12 @@ class ValidatedRecordStore:
                 raise ValueError(f"{name} records are not versioned")
             return None
 
+        # The store alone sets a saved record's version.
+        if not is_new and inspect(record).attrs["version"].history.has_changes():
+            raise ValueError(
+                f"{name}.version is managed by the store; pass expected_version (and revise)"
+            )
+
         if versioning is Versioning.IN_PLACE:
             if is_new:
                 if expected_version is not None or revise:
@@ -220,6 +230,12 @@ class ValidatedRecordStore:
                 return None
             if expected_version is None:
                 raise ValueError("expected_version is required to change a versioned record")
+            # The object must hold the content of the version the caller read.
+            if record.version != expected_version:
+                raise StaleVersionError(
+                    f"{name} {record.record_id} was loaded at version {record.version},"
+                    f" not {expected_version}"
+                )
             stored = session.execute(
                 select(model.version).where(_id_column(model) == record.record_id).with_for_update()
             ).scalar_one_or_none()
@@ -386,46 +402,83 @@ def _validation_error(exc: IntegrityError | DataError) -> RecordValidationError:
 
 
 def _normalise(obj: Any) -> None:
-    """Check values against their columns before saving [R3].
+    """Check every value against its column before saving [R3].
 
-    Numbers must be exact (``Decimal`` or ``int``) and fit the column's scale
-    and precision without rounding; timestamps must carry a time zone and are
-    stored in UTC. Lossless representation changes (``10.000`` -> ``10.00``)
-    are applied so the audit shows exactly what the database stores.
+    A value the database would round, truncate, cast or reject is refused
+    (``RecordValidationError``) rather than stored differently from the
+    audit. Lossless representation changes (``10.000`` -> ``10.00``, a
+    timestamp to UTC, a tuple to a JSON list) are applied, so the audit shows
+    exactly what the database stores.
     """
     state = inspect(obj)
-    label = type(obj).__name__
     for attr in state.mapper.column_attrs:
-        column_type = attr.columns[0].type
         value = state.attrs[attr.key].value
         if value is None:
             continue
-        if isinstance(column_type, Numeric) and column_type.scale is not None:
-            if isinstance(value, (float, bool)) or not isinstance(value, (Decimal, int)):
-                raise RecordValidationError(
-                    f"{label}.{attr.key} must be a Decimal, not {type(value).__name__}"
-                )
-            try:
-                exact = Decimal(value).quantize(Decimal(1).scaleb(-column_type.scale))
-            except InvalidOperation:
-                exact = None
-            limit = Decimal(10) ** (column_type.precision - column_type.scale)
-            if exact is None or not exact.is_finite() or abs(exact) >= limit:
-                raise RecordValidationError(
-                    f"{label}.{attr.key}={value} does not fit"
-                    f" NUMERIC({column_type.precision},{column_type.scale})"
-                )
-            if exact != value:
-                raise RecordValidationError(
-                    f"{label}.{attr.key}={value} has more than {column_type.scale} decimal places"
-                )
-            if str(exact) != str(value):
-                setattr(obj, attr.key, exact)
-        elif isinstance(column_type, DateTime) and column_type.timezone:
-            if not isinstance(value, datetime) or value.utcoffset() is None:
-                raise RecordValidationError(f"{label}.{attr.key} needs a time zone")
-            if value.tzinfo is not UTC:
-                setattr(obj, attr.key, value.astimezone(UTC))
+        field = f"{type(obj).__name__}.{attr.key}"
+        normalised = _normalise_value(field, attr.columns[0].type, value)
+        if normalised is not value:
+            setattr(obj, attr.key, normalised)
+
+
+def _normalise_value(field: str, column_type: Any, value: Any) -> Any:
+    def invalid(reason: str) -> RecordValidationError:
+        return RecordValidationError(f"{field}={value!r} {reason}")
+
+    if isinstance(column_type, Boolean):
+        if not isinstance(value, bool):
+            raise invalid("must be True or False")
+        return value
+    if isinstance(column_type, Integer):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise invalid(f"must be an integer, not {type(value).__name__}")
+        if not _INT_MIN <= value <= _INT_MAX:
+            raise invalid("is outside the INTEGER range")
+        return value
+    if isinstance(column_type, Numeric):
+        if isinstance(value, (float, bool)) or not isinstance(value, (Decimal, int)):
+            raise invalid(f"must be a Decimal, not {type(value).__name__}")
+        try:
+            exact = Decimal(value).quantize(Decimal(1).scaleb(-column_type.scale))
+        except InvalidOperation:
+            exact = None
+        limit = Decimal(10) ** (column_type.precision - column_type.scale)
+        if exact is None or not exact.is_finite() or abs(exact) >= limit:
+            raise invalid(f"does not fit NUMERIC({column_type.precision},{column_type.scale})")
+        if exact != value:
+            raise invalid(f"has more than {column_type.scale} decimal places")
+        return value if str(exact) == str(value) else exact
+    if isinstance(column_type, DateTime):
+        if not isinstance(value, datetime):
+            raise invalid("must be a datetime")
+        if not column_type.timezone:
+            return value
+        if value.utcoffset() is None:
+            raise invalid("needs a time zone")
+        return value if value.tzinfo is UTC else value.astimezone(UTC)
+    if isinstance(column_type, Date):
+        if not isinstance(value, date) or isinstance(value, datetime):
+            raise invalid("must be a date")
+        return value
+    if isinstance(column_type, Uuid):
+        if not isinstance(value, uuid.UUID):
+            raise invalid("must be a uuid.UUID")
+        return value
+    if isinstance(column_type, String):
+        if not isinstance(value, str):
+            raise invalid(f"must be text, not {type(value).__name__}")
+        if column_type.length is not None and len(value) > column_type.length:
+            raise invalid(f"is longer than {column_type.length} characters")
+        if "\x00" in value:
+            raise invalid("contains a NUL character")
+        return value
+    if isinstance(column_type, JSON):
+        try:
+            stored = json.loads(json.dumps(value, allow_nan=False))
+        except (TypeError, ValueError):
+            raise invalid("must be plain JSON; write decimals as strings") from None
+        return value if stored == value else stored
+    raise invalid(f"has an unchecked column type {type(column_type).__name__}")
 
 
 def _snapshot(obj: Any, *, previous: bool = False) -> dict[str, Any]:
@@ -486,7 +539,21 @@ def _guard_flush(session: Session, flush_context: Any, instances: Any) -> None:
         )
 
 
+@cache
+def _business_tables() -> frozenset[str]:
+    return frozenset(name for name in Base.metadata.tables if name != ConstraintGuard.__tablename__)
+
+
 @event.listens_for(Session, "do_orm_execute")
-def _no_bulk_audit_changes(state: ORMExecuteState) -> None:
-    if (state.is_update or state.is_delete) and state.bind_mapper is inspect(AuditEntry):
+def _no_bulk_record_writes(state: ORMExecuteState) -> None:
+    """Bulk INSERT/UPDATE/DELETE would skip version checks and audit."""
+    if not (state.is_insert or state.is_update or state.is_delete):
+        return
+    table = getattr(getattr(state.statement, "table", None), "name", None)
+    if table == AuditEntry.__tablename__ and not state.is_insert:
         raise AuditImmutableError("audit entries cannot be changed or deleted")
+    if table in _business_tables():
+        raise UnauditedWriteError(
+            f"bulk writes to {table} bypass ValidatedRecordStore.commit();"
+            " load and commit each record instead"
+        )

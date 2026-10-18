@@ -7,16 +7,33 @@
 3. Owned rows that were never loaded (order items) are still audited.
 4. Values are checked against the column precision before saving, so the
    audit records exactly what the database stores.
+
+Second review round:
+
+5. Only the store sets ``version``; a caller cannot roll it back, and the
+   loaded object must be the version the caller claims to have read.
+6. Bulk INSERT/UPDATE/DELETE statements on business tables are refused, so
+   they cannot skip version checks and audit.
+7. Every column type is checked, not only money: integers, booleans, text,
+   UUIDs, dates and JSON.
 """
 
 from datetime import datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, func, insert, select, update
 
 from app.shared import RecordValidationError, StaleVersionError, UnauditedWriteError
-from app.shared.records import AuditEntry, CustomerDecision, InventoryItem, Order, Quote
+from app.shared.records import (
+    AuditEntry,
+    CustomerDecision,
+    InventoryItem,
+    Order,
+    OrderItem,
+    Product,
+    Quote,
+)
 
 from test_store import draft_order, quote_for, save_draft  # noqa: E402
 
@@ -206,3 +223,115 @@ def test_timestamps_must_carry_a_time_zone(store, seeded):
     with pytest.raises(RecordValidationError, match="required_at"):
         with store.unit_of_work() as session:
             store.commit(session, order, actor_id=seeded.customer_user_id, action="order.draft")
+
+
+# 5. Versions are managed by the store ------------------------------------------
+
+
+def revise_budget(store, seeded, order_id, budget, expected):
+    with store.unit_of_work() as session:
+        order = store.load(session, Order, order_id)
+        order.budget = Decimal(budget)
+        return store.commit(
+            session, order, actor_id=seeded.owner_id, action="order.edit",
+            expected_version=expected, revise=True,
+        )
+
+
+def test_caller_cannot_roll_a_version_back(store, seeded):
+    v1 = save_draft(store, seeded)
+    revise_budget(store, seeded, v1.record_id, "60.00", expected=1)
+
+    with pytest.raises(ValueError, match="version"):
+        with store.unit_of_work() as session:
+            order = store.load(session, Order, v1.record_id)
+            order.version = 1
+            order.budget = Decimal("70.00")
+            store.commit(session, order, actor_id=seeded.owner_id, action="order.edit", expected_version=2)
+
+    with store.unit_of_work() as session:
+        order = store.load(session, Order, v1.record_id)
+        assert (order.version, order.budget) == (2, Decimal("60.00"))
+        with pytest.raises(StaleVersionError):
+            store.load_ref(session, v1)
+
+
+def test_caller_cannot_change_a_saved_rows_version(store, seeded):
+    _, quote_ref = saved_quote(store, seeded)
+
+    with pytest.raises(ValueError, match="version"):
+        with store.unit_of_work() as session:
+            quote = store.load_ref(session, quote_ref)
+            quote.version = 7
+            store.commit(session, quote, actor_id=seeded.owner_id, action="quote.edit", expected_version=1)
+
+
+def test_object_loaded_before_another_revision_is_stale(store, seeded):
+    v1 = save_draft(store, seeded)
+
+    with pytest.raises(StaleVersionError):
+        with store.unit_of_work() as session:
+            old = store.load(session, Order, v1.record_id)  # reads version 1
+            revise_budget(store, seeded, v1.record_id, "60.00", expected=1)  # someone else: v2
+            old.budget = Decimal("99.00")
+            # Claims to have read v2, but this object holds version 1's content.
+            store.commit(session, old, actor_id=seeded.owner_id, action="order.edit", expected_version=2)
+
+    with store.unit_of_work() as session:
+        assert store.load(session, Order, v1.record_id).budget == Decimal("60.00")
+
+
+# 6. No bulk writes on business tables -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        lambda s: update(Quote).values(total=Decimal("999.00")),
+        lambda s: update(Quote.__table__).values(total=Decimal("999.00")),
+        lambda s: delete(Order),
+        lambda s: insert(Product).values(
+            name="Ghost cake", category="cake", labour_minutes=Decimal("1"), packaging_cost=Decimal("1")
+        ),
+    ],
+    ids=["orm-update", "core-update", "delete", "insert"],
+)
+def test_bulk_writes_to_business_tables_are_refused(store, seeded, statement):
+    order_ref, quote_ref = saved_quote(store, seeded)
+    with store.unit_of_work() as session:
+        audits = session.scalar(select(func.count()).select_from(AuditEntry))
+
+    with pytest.raises(UnauditedWriteError):
+        with store.unit_of_work() as session:
+            session.execute(statement(seeded))
+
+    with store.unit_of_work() as session:
+        assert store.load_ref(session, quote_ref).total == Decimal("90.00")
+        assert store.load_ref(session, order_ref) is not None
+        assert session.scalar(select(func.count()).select_from(Product)) == 4
+        assert session.scalar(select(func.count()).select_from(AuditEntry)) == audits
+
+
+# 7. Every column type is checked ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("quantity", Decimal("1.5")),  # the database would round it to 2
+        ("quantity", Decimal("2")),
+        ("quantity", True),
+        ("quantity", 2**31),
+        ("flavour", 42),
+    ],
+)
+def test_order_item_fields_must_fit_their_columns(store, seeded, field, value):
+    order = draft_order(seeded)
+    setattr(order.items[0], field, value)
+
+    with pytest.raises(RecordValidationError, match=field):
+        with store.unit_of_work() as session:
+            store.commit(session, order, actor_id=seeded.customer_user_id, action="order.draft")
+
+    with store.unit_of_work() as session:
+        assert session.scalar(select(func.count()).select_from(OrderItem)) == 0
