@@ -1,0 +1,84 @@
+"""Tests for the order workflow stages and audit log (BAKE-8)."""
+
+from __future__ import annotations
+
+import pytest
+
+from app.workflow.order_flow import (
+    OrderStage,
+    RecordRef,
+    TransitionRejected,
+    WorkflowService,
+)
+
+ORDER = RecordRef(record_type="Order", record_id="O1", version=1)
+
+ALLOWED = [
+    (OrderStage.DRAFT, OrderStage.QUOTED),
+    (OrderStage.DRAFT, OrderStage.CANCELLED),
+    (OrderStage.QUOTED, OrderStage.CONFIRMED),
+    (OrderStage.QUOTED, OrderStage.CANCELLED),
+    (OrderStage.CONFIRMED, OrderStage.SCHEDULED),
+    (OrderStage.CONFIRMED, OrderStage.CANCELLED),
+    (OrderStage.SCHEDULED, OrderStage.IN_PRODUCTION),
+    (OrderStage.IN_PRODUCTION, OrderStage.COMPLETED),
+]
+
+BLOCKED = [
+    (OrderStage.DRAFT, OrderStage.COMPLETED),
+    (OrderStage.DRAFT, OrderStage.CONFIRMED),
+    (OrderStage.QUOTED, OrderStage.SCHEDULED),
+    (OrderStage.SCHEDULED, OrderStage.CANCELLED),
+    (OrderStage.IN_PRODUCTION, OrderStage.CANCELLED),
+    (OrderStage.COMPLETED, OrderStage.CANCELLED),
+    (OrderStage.CANCELLED, OrderStage.DRAFT),
+]
+
+
+@pytest.mark.parametrize("current,requested", ALLOWED)
+def test_allowed_transitions_move_the_order(current, requested):
+    service = WorkflowService()
+    result = service.move_order(ORDER, current, requested, actor="owner", event_type="test")
+    assert result is requested
+
+
+@pytest.mark.parametrize("current,requested", BLOCKED)
+def test_blocked_transitions_are_rejected(current, requested):
+    service = WorkflowService()
+    with pytest.raises(TransitionRejected):
+        service.move_order(ORDER, current, requested, actor="owner", event_type="test")
+
+
+@pytest.mark.parametrize("current,requested", BLOCKED)
+def test_blocked_transitions_write_nothing(current, requested):
+    service = WorkflowService()
+    with pytest.raises(TransitionRejected):
+        service.move_order(ORDER, current, requested, actor="owner", event_type="test")
+    assert service.audit_log == ()
+
+
+def test_one_audit_entry_per_transition():
+    service = WorkflowService()
+    stage = OrderStage.DRAFT
+    for nxt in (
+        OrderStage.QUOTED,
+        OrderStage.CONFIRMED,
+        OrderStage.SCHEDULED,
+        OrderStage.IN_PRODUCTION,
+        OrderStage.COMPLETED,
+    ):
+        stage = service.move_order(ORDER, stage, nxt, actor="owner", event_type="test")
+    assert len(service.audit_log) == 5
+
+
+def test_audit_entry_records_both_states():
+    service = WorkflowService()
+    service.move_order(
+        ORDER, OrderStage.DRAFT, OrderStage.QUOTED,
+        actor="owner", event_type="quotationApproved",
+    )
+    entry = service.audit_log[0]
+    assert entry.previous_state == "Draft"
+    assert entry.resulting_state == "Quoted"
+    assert entry.actor == "owner"
+    assert entry.subject == ORDER
