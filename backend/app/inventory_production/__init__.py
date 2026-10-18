@@ -3,3 +3,13 @@
 Home of ``InventoryProductionAgent``, ``InventoryService`` and
 ``ProductionService`` (architecture §6.1).
 """
+
+from app.inventory_production.inventory import (
+    InventoryService,
+    Problem,
+    ProblemKind,
+    StockCheckError,
+    StockCheckResult,
+)
+
+__all__ = ["InventoryService", "Problem", "ProblemKind", "StockCheckError", "StockCheckResult"]
