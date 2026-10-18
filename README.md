@@ -54,10 +54,13 @@ You need Docker Desktop (Compose v2). To run the backend tests without Docker yo
 ### App and database
 
 ```bash
-cp .env.example .env    # then set your own POSTGRES_PASSWORD
+cp .env.example .env    # then set your own POSTGRES_PASSWORD and seed passwords
 docker compose up --build -d
 docker compose ps       # app and db should both become "healthy"
+docker compose exec app python -m app.seed    # demo data into the empty database
 ```
+
+To start the demo data again from scratch: `docker compose exec app python -m app.seed --reset --yes`. This deletes all business data, so it is refused unless `BAKEFLOW_ENVIRONMENT` is `development`, `demo` or `test`. The seed creates the logins `owner@bakeflow.test` and `customer@bakeflow.test` with the passwords from `.env`.
 
 - <http://localhost:8000/api/health/ready> returns `{"status":"ok","database":"ok"}` once the app can reach PostgreSQL.
 - <http://localhost:8000/docs> shows the generated API documentation.
@@ -74,7 +77,14 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Unit tests need no database. Dependencies are pinned exactly in `backend/requirements.txt` (runtime) and `backend/requirements-dev.txt` (tests); change pins deliberately in their own PR.
+Unit tests need no database. Integration tests (`tests/integration/`) run against a real, throwaway PostgreSQL and are skipped unless you point them at one:
+
+```bash
+docker compose --profile test up -d test-db    # in-memory, 127.0.0.1:55432
+BAKEFLOW_TEST_DATABASE_URL=postgresql+psycopg://bakeflow_test:bakeflow_test@127.0.0.1:55432/bakeflow_test pytest
+```
+
+They rebuild the schema with the migrations, so never point them at a database you need. Dependencies are pinned exactly in `backend/requirements.txt` (runtime) and `backend/requirements-dev.txt` (tests); change pins deliberately in their own PR.
 
 ### Project layout
 
@@ -85,7 +95,8 @@ Each module is a package inside one application, so all four members can work in
 | `backend/app/main.py` | FastAPI app: `/api/health`, `/api/health/ready`, and the built UI when `frontend/dist` exists |
 | `backend/app/config.py` | Settings from `BAKEFLOW_*` environment variables |
 | `backend/app/db/` | SQLAlchemy declarative base, engine and session factory |
-| `backend/app/shared/` | Shared model and services: records, `RecordRef`, events, task contracts, approvals, record store (BAKE-7) |
+| `backend/app/shared/` | Shared model and services: `records/` (Stage 1 core tables), `RecordRef`, `ValidatedRecordStore` (BAKE-7); events, task contracts and approvals to follow |
+| `backend/app/seed.py` | Deterministic demo data: `python -m app.seed [--reset --yes]` |
 | `backend/app/workflow/` | `WorkflowService` and transition tables (BAKE-8); architecture §6.1 calls it `coordination/` |
 | `backend/app/llm/` | LLM gateway and Mock client (BAKE-9); architecture §6.1 calls it `ai_support/` |
 | `backend/app/sales/` | Sales and Customer Service: UC-01, UC-02 |
