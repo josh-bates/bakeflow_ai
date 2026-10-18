@@ -1,0 +1,6 @@
+# Tool configuration for the BakeFlow AI backend (BAKE-6).
+# Dependencies are pinned in requirements.txt and requirements-dev.txt.
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
