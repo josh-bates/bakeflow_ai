@@ -1,7 +1,8 @@
 """Alembic migration environment (BAKE-6).
 
 The database URL comes from ``BAKEFLOW_DATABASE_URL`` via ``app.config``,
-never from ``alembic.ini``. Import ORM model modules below so that
+never from ``alembic.ini``; tests pass their own URL in
+``config.attributes["database_url"]``. Import ORM model modules below so that
 ``alembic revision --autogenerate`` can see their tables.
 """
 
@@ -13,7 +14,8 @@ from alembic import context
 from app.config import get_settings
 from app.db.base import Base
 
-# Model modules register their tables on Base.metadata when imported (BAKE-7+).
+# Model modules register their tables on Base.metadata when imported.
+import app.shared.records  # noqa: E402,F401  (BAKE-7 core records)
 
 config = context.config
 
@@ -24,7 +26,7 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
-    url = get_settings().database_url
+    url = config.attributes.get("database_url") or get_settings().database_url
     if not url:
         raise RuntimeError(
             "BAKEFLOW_DATABASE_URL is not set; see .env.example in the repository root."
