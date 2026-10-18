@@ -87,27 +87,32 @@ export function CustomerPage({
 
   return (
     <>
-      <section className="intro customer-intro">
-        <img className="hero-art" src="/bakery-illustration.svg" alt="" aria-hidden="true" />
-        <p className="eyebrow">A HELPING HAND FOR ROSIE’S BAKERY</p>
-        <h1>
-          YOUR NEXT
-          <br />
-          <em>SWEET OCCASION.</em>
-        </h1>
-        <p>
-          Tell us what you have in mind. We’ll help turn the details into your
-          next celebration.
-        </p>
+      <section className="dessert-hero" aria-labelledby="hero-title">
+        <div className="hero-copy">
+          <p className="eyebrow">BAKEFLOW / CAKES & CELEBRATIONS</p>
+          <h1 id="hero-title">A little indulgence.<br /><em>A special occasion.</em></h1>
+          <p>Custom cakes and cupcakes, made around your occasion. Tell us what you have in mind.</p>
+          <div className="hero-actions">
+            <button className="primary" onClick={() => { document.getElementById('request-title')?.scrollIntoView({ block: 'start' }); document.getElementById('order-request')?.focus({ preventScroll: true }); }}>Start a custom order <span aria-hidden="true">↗</span></button>
+            <button className="text-button" onClick={() => { document.getElementById('orders-title')?.scrollIntoView({ block: 'start' }); document.getElementById('orders-title')?.focus({ preventScroll: true }); }}>View my orders <span aria-hidden="true">→</span></button>
+          </div>
+          <p className="hero-note">Your occasion. Your details. Something thoughtfully made.</p>
+        </div>
+        <figure className="hero-photo">
+          <img src="/images/chocolate-cake.jpg" alt="Layered chocolate cake with red berries and cocoa on a white ceramic plate" width="1600" height="900" fetchPriority="high" />
+          <figcaption><span>A MOMENT OF SWEETNESS</span><span>01 / Chocolate</span></figcaption>
+        </figure>
       </section>
       <div className="customer-grid">
         <section className="card" aria-labelledby="request-title">
-          <div className="section-number">01 / YOUR REQUEST</div>
-          <h2 id="request-title">Let’s make it yours</h2>
+          <div className="request-intro">
+          <div className="section-number">01 / MADE FOR YOU</div>
+          <h2 id="request-title">Request a custom order</h2>
           <p className="muted">
             Include the product, quantity, flavours and when you need it. Add
             any customisation or allergen questions.
           </p>
+          </div>
           <form onSubmit={submit}>
             <label htmlFor="order-request">What would you like to order?</label>
             <textarea
@@ -125,8 +130,7 @@ export function CustomerPage({
               aria-describedby="request-help"
             />
             <p id="request-help" className="field-help">
-              Submitting starts a request. It does not confirm an order or
-              payment.
+              We’ll review your request before confirming the details and price. No payment is taken here.
             </p>
             {error && <Notice error>{error}</Notice>}
             {result && (
@@ -142,43 +146,12 @@ export function CustomerPage({
             </button>
           </form>
         </section>
-        <aside className="guidance">
-          <span className="stamp" aria-hidden="true">
-            ✳
-          </span>
-          <p className="eyebrow">A LITTLE HELP</p>
-          <h2>
-            Before Rosie
-            <br />
-            can bake…
-          </h2>
-          <ol>
-            <li>
-              <strong>Share your idea</strong>
-              <span>Tell us about your occasion and your order.</span>
-            </li>
-            <li>
-              <strong>Review the details</strong>
-              <span>
-                Any missing information needs clarification before a draft is
-                saved.
-              </span>
-            </li>
-            <li>
-              <strong>Accept your quotation</strong>
-              <span>
-                An order is confirmed only after you accept an owner-approved
-                quote.
-              </span>
-            </li>
-          </ol>
-        </aside>
       </div>
       <section className="card orders" aria-labelledby="orders-title">
         <div className="section-heading">
           <div>
-            <div className="section-number">02 / KEEP IN TOUCH</div>
-            <h2 id="orders-title">Your orders</h2>
+            <div className="section-number">02 / YOUR COLLECTION</div>
+            <h2 id="orders-title" tabIndex={-1}>Your orders</h2>
           </div>
           <button
             className="secondary"
@@ -195,10 +168,9 @@ export function CustomerPage({
         ) : orders.length === 0 ? (
           <div className="empty">
             <span aria-hidden="true">◇</span>
-            <h3>No saved orders yet</h3>
+            <h3>No orders yet</h3>
             <p>
-              Once your request has been reviewed and saved as a draft, it will
-              appear here.
+              Your orders will appear here once the bakery has reviewed your request.
             </p>
           </div>
         ) : (

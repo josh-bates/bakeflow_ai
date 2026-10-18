@@ -73,9 +73,9 @@ export function App() {
       <header className="topbar">
         <a className="brand" href={`#${home}`}>
           <span className="brand-mark" aria-hidden="true">
-            ✳
+            B
           </span>
-          BAKEFLOW AI<span className="brand-small">BAKERY WORKSPACE</span>
+          BakeFlow<span className="brand-small">CAKES & OCCASIONS</span>
         </a>
         {session && (
           <div className="identity">

@@ -156,9 +156,9 @@ it("distinguishes unavailable order data from an empty list and supports retry",
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "could not complete",
   );
-  expect(screen.queryByText("No saved orders yet")).not.toBeInTheDocument();
+  expect(screen.queryByText("No orders yet")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Refresh orders" }));
-  expect(await screen.findByText("No saved orders yet")).toBeInTheDocument();
+  expect(await screen.findByText("No orders yet")).toBeInTheDocument();
 });
 
 it("requires sign-in rather than inventing a customer role", async () => {
@@ -229,6 +229,19 @@ it("does not display a mock banner for a live session", async () => {
       : response({ orders: [] }),
   );
   render(<App />);
-  await screen.findByText("No saved orders yet");
+  await screen.findByText("No orders yet");
   expect(screen.queryByText("Prototype · Mock mode")).not.toBeInTheDocument();
+});
+
+it('homepage shortcuts take the customer to the request form and their orders', async () => {
+  const user = userEvent.setup();
+  const scroll = vi.fn();
+  vi.stubGlobal('scrollTo', vi.fn());
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scroll });
+  render(<App />);
+  await user.click(await screen.findByRole('button', { name: /Start a custom order/ }));
+  expect(screen.getByLabelText('What would you like to order?')).toHaveFocus();
+  await user.click(screen.getByRole('button', { name: /View my orders/ }));
+  expect(screen.getByRole('heading', { name: 'Your orders' })).toHaveFocus();
+  expect(scroll).toHaveBeenCalledTimes(2);
 });
