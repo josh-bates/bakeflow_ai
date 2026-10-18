@@ -41,3 +41,27 @@ GitHub repository: [josh-bates/bakeflow_ai](https://github.com/josh-bates/bakefl
 > ELEC5620 Stage Two: AI-assisted bakery operations with four specialist agents, deterministic workflows and owner approvals.
 
 See [repository setup and Jira handoff](docs/repository-setup.md).
+
+
+## LLM provider configuration
+
+All agents reach the language model through one gateway
+(`backend/app/llm/gateway.py`, BAKE-9). It is configured from the environment,
+never from a committed file:
+
+| Variable | Purpose |
+| --- | --- |
+| `BAKEFLOW_LLM_BASE_URL` | OpenAI-compatible endpoint |
+| `BAKEFLOW_LLM_API_KEY` | provider key |
+| `BAKEFLOW_LLM_MODEL` | model name |
+
+Set these in a local `.env` or in your shell. `.env` is git-ignored and must
+never be committed or included in the Canvas zip.
+
+Sprint 1 runs entirely on `MockLLMClient`, so no provider is needed to run the
+tests or an offline demo. **Provider choice is still open** — the architecture
+draft proposes campus Qwen via the AI Proxy first, with a personal subscription
+as a fallback. This section will be updated once the team confirms it.
+
+The gateway makes exactly one provider call per request and does not retry. The
+retry budget belongs to `WorkflowService` (BAKE-8).
