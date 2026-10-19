@@ -280,11 +280,21 @@ class ValidatedRecordStore:
         self._lock_latest_row(session, model, record.record_id, expected_version)
         return None
 
-    def load(self, session: Session, model: type[R], record_id: uuid.UUID, *, version: int | None = None) -> R:
+    def load(
+        self,
+        session: Session,
+        model: type[R],
+        record_id: uuid.UUID,
+        *,
+        version: int | None = None,
+        lock: bool = False,
+    ) -> R:
         """Read one record; the latest version unless ``version`` is given.
 
         For an in-place versioned record, a ``version`` that is no longer the
-        stored one raises ``StaleVersionError``.
+        stored one raises ``StaleVersionError``. ``lock=True`` reads it with
+        ``SELECT ... FOR UPDATE``: guarded saves of that row wait until this
+        unit of work ends, so what was read cannot change underneath it.
         """
         if model.__versioning__ is Versioning.ROWS:
             query = select(model).where(_id_column(model) == record_id)
@@ -292,9 +302,13 @@ class ValidatedRecordStore:
                 query = query.order_by(model.version.desc()).limit(1)
             else:
                 query = query.where(model.version == version)
+            if lock:
+                query = query.with_for_update()
             record = session.execute(query).scalar_one_or_none()
         else:
-            record = session.get(model, record_id)
+            record = session.get(
+                model, record_id, with_for_update=True if lock else None, populate_existing=lock
+            )
             if record is not None and version is not None and record.version != version:
                 raise StaleVersionError(
                     f"{model.__record_type__} {record_id} is at version {record.version}, not {version}"

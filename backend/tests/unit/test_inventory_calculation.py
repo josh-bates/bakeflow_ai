@@ -52,3 +52,11 @@ def test_incompatible_units_have_no_factor(recipe_unit, stock_unit):
 
 def test_kilogram_recipe_line_becomes_grams():
     assert ingredient_need(24, 12, Decimal("0.3"), conversion_factor("kg", "g")) == Decimal("600")
+
+
+def test_split_lines_need_exactly_what_one_line_needs():
+    # 12 lines of 1 chocolate cupcake vs 1 line of 12: 260 g flour either way.
+    split = sum(ingredient_need(1, 12, Decimal("260"), Decimal(1)) for _ in range(12))
+    whole = ingredient_need(12, 12, Decimal("260"), Decimal(1))
+
+    assert round_up_quantity(split) == round_up_quantity(whole) == Decimal("260.000")

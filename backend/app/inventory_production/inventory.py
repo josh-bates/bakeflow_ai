@@ -9,9 +9,10 @@ changes stock or reserves anything (UC-03; T-UC03).
 Calculation (Stage 1 Fig. 10): an item needs
 ``quantity / recipe.yield_units * quantity_per_batch`` of each ingredient, in
 the stock unit. 24 vanilla cupcakes from a 12-cupcake recipe with 300 g flour
-per batch need 600 g. Needs for the same ingredient are summed exactly over all
-items, then rounded **up** once to the 0.001 stock precision, so a list never
-under-states what to buy.
+per batch need 600 g. Needs are exact fractions, summed exactly over all items
+(so twelve lines of one need the same as one line of twelve), then rounded
+**up** once to the 0.001 stock precision, so a list never under-states what to
+buy.
 
 Availability is the stock on hand. Stock committed to other approved orders
 (IP-02) is subtracted by BAKE-19.
@@ -36,8 +37,10 @@ import logging
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
-from decimal import ROUND_CEILING, Context, Decimal, localcontext
+import math
+from decimal import Decimal
 from enum import StrEnum
+from fractions import Fraction
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -49,8 +52,8 @@ from app.shared.store import StoreError
 
 STOCK_ACTION = "inventory.stock_check"
 _log = logging.getLogger(__name__)
-QUANTITY = Decimal("0.001")
-_EXACT = Context(prec=40)
+# Stock quantities are kept to 0.001 (NUMERIC(12,3)).
+_THOUSANDTHS = 1000
 
 # Unit conversions the recipe may use: (recipe unit, stock unit) -> factor.
 _CONVERSIONS: dict[tuple[str, str], Decimal] = {
@@ -117,7 +120,11 @@ class InventoryService:
         cannot be checked; in both cases nothing is saved.
         """
         with self._store.unit_of_work() as session:
-            order = self._store.load(session, Order, order_id, version=expected_order_version)
+            # Lock the order for this short transaction: an edit waits until the
+            # list is saved, so the list always matches the version it records.
+            order = self._store.load(
+                session, Order, order_id, version=expected_order_version, lock=True
+            )
             if order.status in _CLOSED:
                 raise StockCheckError(
                     [Problem(ProblemKind.ORDER_CLOSED, f"order is {order.status}")]
@@ -163,7 +170,7 @@ class InventoryService:
         problems: list[Problem] = []
         if not order.items:
             problems.append(Problem(ProblemKind.NO_ITEMS, "order has no items"))
-        totals: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
+        totals: dict[uuid.UUID, Fraction] = defaultdict(Fraction)
         stock_units = dict(session.execute(select(InventoryItem.item_id, InventoryItem.unit)).all())
 
         for item in order.items:
@@ -281,16 +288,18 @@ def conversion_factor(recipe_unit: str, stock_unit: str) -> Decimal | None:
 
 def ingredient_need(
     quantity: int, yield_units: int, per_batch: Decimal, factor: Decimal
-) -> Decimal:
-    """Exact need of one ingredient for one item, e.g. 24 / 12 * 300 g = 600 g."""
-    with localcontext(_EXACT):
-        return Decimal(quantity) * per_batch * factor / Decimal(yield_units)
+) -> Fraction:
+    """Exact need of one ingredient for one item, e.g. 24 / 12 * 300 g = 600 g.
+
+    A fraction, not a rounded decimal, so needs can be summed without error.
+    """
+    return Fraction(quantity) * Fraction(per_batch) * Fraction(factor) / yield_units
 
 
-def round_up_quantity(value: Decimal) -> Decimal:
+def round_up_quantity(value: Fraction | Decimal) -> Decimal:
     """Round a need up to the 0.001 stock precision (never under-state it)."""
-    with localcontext(_EXACT):
-        return value.quantize(QUANTITY, rounding=ROUND_CEILING)
+    thousandths = math.ceil(Fraction(value) * _THOUSANDTHS)
+    return Decimal(thousandths).scaleb(-3)
 
 
 def _to_json(quantities: dict[uuid.UUID, Decimal]) -> dict[str, str]:

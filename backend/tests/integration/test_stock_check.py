@@ -287,3 +287,71 @@ def test_no_allergen_concerns_use_the_standard_recipe(store, seeded, inventory, 
     result = inventory.run_stock_check(ref.record_id, expected_order_version=1, actor_id=seeded.owner_id)
 
     assert result.requirements[seeded.items["Flour"]] == Decimal("600.000")
+
+
+def set_flour(store, seeded, grams):
+    with store.unit_of_work() as session:
+        flour = store.load(session, InventoryItem, seeded.items["Flour"])
+        flour.quantity_on_hand = Decimal(grams)
+        store.commit(
+            session, flour, actor_id=seeded.owner_id, action="stock.adjust", expected_version=flour.version
+        )
+
+
+def test_split_lines_need_the_same_as_one_line(store, seeded, inventory):
+    set_flour(store, seeded, "260.000")
+    chocolate = seeded.products["Chocolate cupcake"]
+    split = place_order(store, seeded, *[(chocolate, 1)] * 12)
+    whole = place_order(store, seeded, (chocolate, 12))
+
+    split_result, whole_result = (
+        inventory.run_stock_check(ref.record_id, expected_order_version=1, actor_id=seeded.owner_id)
+        for ref in (split, whole)
+    )
+
+    flour = seeded.items["Flour"]
+    assert split_result.requirements[flour] == whole_result.requirements[flour] == Decimal("260.000")
+    assert split_result.shortages == whole_result.shortages == {}
+
+
+def test_order_cannot_change_while_it_is_checked(store, seeded, inventory, monkeypatch):
+    """A concurrent edit waits until the check commits, so the list matches its version."""
+    import threading
+
+    ref = place_order(store, seeded, (seeded.products["Vanilla cupcake"], 24))
+    edited = threading.Event()
+    errors: list[BaseException] = []
+    seen: dict[str, bool] = {}
+
+    def edit_order():
+        try:
+            with store.unit_of_work() as session:
+                order = store.load(session, Order, ref.record_id)
+                order.items[0].quantity = 36
+                store.commit(
+                    session, order, actor_id=seeded.owner_id, action="order.edit",
+                    expected_version=1, revise=True,
+                )
+            edited.set()
+        except BaseException as exc:  # surface thread failures in the test
+            errors.append(exc)
+
+    editor = threading.Thread(target=edit_order)
+    original_check_stock = InventoryService.check_stock
+
+    def check_stock_while_someone_edits(self, session, requirements):
+        editor.start()
+        seen["edited_during_check"] = edited.wait(timeout=1.0)
+        return original_check_stock(self, session, requirements)
+
+    monkeypatch.setattr(InventoryService, "check_stock", check_stock_while_someone_edits)
+    result = inventory.run_stock_check(ref.record_id, expected_order_version=1, actor_id=seeded.owner_id)
+    editor.join(timeout=10)
+
+    assert errors == []
+    assert seen["edited_during_check"] is False  # the edit waited for the check
+    assert edited.is_set()  # and went in afterwards
+    assert (result.order_ref.version, result.requirements[seeded.items["Flour"]]) == (1, Decimal("600.000"))
+    with store.unit_of_work() as session:
+        order = store.load(session, Order, ref.record_id)
+        assert (order.version, order.items[0].quantity) == (2, 36)
