@@ -16,6 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, StrictInt, field_validator
 from sqlalchemy import select
 
+from app.inventory_production import InventoryService
 from app.llm.gateway import ILLMClient, parse_structured_reply
 from app.shared.records import Customer, Order, OrderItem, Product
 from app.shared.store import ValidatedRecordStore
@@ -198,6 +199,11 @@ class OrderIntake(WorkflowService):
                           items=[OrderItem(product_id=products[i.product.casefold()], quantity=i.quantity,
                                            flavour=i.flavour, theme=i.theme, customisation=i.customisation)
                                  for i in summary.items])
-            self.store.commit(session, order, actor_id=customer.user_id, action="order.draft_created")
+            draft = self.store.commit(session, order, actor_id=customer.user_id, action="order.draft_created")
         # Only report success after the transaction commits (including its audit entry).
+        # Then UC-03 runs as its own transaction (BAKE-12, TX-STOCK-CHECK); its result is
+        # for the owner and a failure never affects the saved draft.
+        InventoryService(self.store).check_after_draft_saved(
+            order_id, order_version=draft.version, actor_id=customer.user_id
+        )
         return {"orderId": str(order_id), "status": "Draft"}

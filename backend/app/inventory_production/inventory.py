@@ -18,10 +18,21 @@ Availability is the stock on hand. Stock committed to other approved orders
 
 Problems (UC-03 1a-2a) are collected and reported together; when there is any,
 no shopping list is saved, so nothing looks complete that is not.
+
+Recipe choice (agreed with BAKE-11): an item's ``resolved_recipe_id`` when set,
+otherwise the product's single recipe, unless the item has a customisation or
+the order has allergen concerns. Those need an owner-approved recipe first and
+never fall back to the standard recipe silently.
+
+Workflow (architecture §4.1.1, ``ORDER_INVENTORY_CHECK_REQUESTED``): the check
+runs right after a customer-confirmed draft commits (``check_after_draft_saved``)
+and the owner can run it again with ``run_stock_check``. It is a separate
+transaction (``TX-STOCK-CHECK``), so a failed check never undoes the draft.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
@@ -29,6 +40,7 @@ from decimal import ROUND_CEILING, Context, Decimal, localcontext
 from enum import StrEnum
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.shared import RecordRef, ValidatedRecordStore
@@ -36,6 +48,7 @@ from app.shared.records import InventoryItem, Order, OrderItem, OrderStatus, Rec
 from app.shared.store import StoreError
 
 STOCK_ACTION = "inventory.stock_check"
+_log = logging.getLogger(__name__)
 QUANTITY = Decimal("0.001")
 _EXACT = Context(prec=40)
 
@@ -58,6 +71,7 @@ class ProblemKind(StrEnum):
     MISSING_RECIPE = "MISSING_RECIPE"
     RECIPE_MISMATCH = "RECIPE_MISMATCH"
     UNRESOLVED_CUSTOMISATION = "UNRESOLVED_CUSTOMISATION"
+    ALLERGEN_REVIEW_REQUIRED = "ALLERGEN_REVIEW_REQUIRED"
     EMPTY_RECIPE = "EMPTY_RECIPE"
     INCOMPATIBLE_UNIT = "INCOMPATIBLE_UNIT"
 
@@ -124,6 +138,26 @@ class InventoryService:
                 shortages=shortages,
             )
 
+    def check_after_draft_saved(
+        self, order_id: uuid.UUID, *, order_version: int, actor_id: uuid.UUID
+    ) -> StockCheckResult | None:
+        """Run UC-03 straight after a draft commits; never undo or fail the draft.
+
+        Returns ``None`` when the check could not be completed. The draft stays
+        saved without a current shopping list, so pricing waits until the
+        owner re-runs the check (architecture §4.1.1).
+        """
+        try:
+            return self.run_stock_check(
+                order_id, expected_order_version=order_version, actor_id=actor_id
+            )
+        except StockCheckError as exc:
+            kinds = ", ".join(sorted({problem.kind for problem in exc.problems}))
+            _log.warning("Stock check for order %s needs the owner: %s", order_id, kinds)
+        except (StoreError, SQLAlchemyError) as exc:
+            _log.warning("Stock check for order %s was not saved: %s", order_id, type(exc).__name__)
+        return None
+
     def calculate_needs(self, session: Session, order: Order) -> dict[uuid.UUID, Decimal]:
         """UC-03 steps 1-2: what the whole order needs, per inventory item."""
         problems: list[Problem] = []
@@ -143,7 +177,7 @@ class InventoryService:
                     )
                 )
                 continue
-            recipe = self._recipe_for(session, item, problems)
+            recipe = self._recipe_for(session, item, bool(order.allergen_concerns), problems)
             if recipe is None:
                 continue
             if not recipe.ingredients:
@@ -192,7 +226,9 @@ class InventoryService:
         }
 
     @staticmethod
-    def _recipe_for(session: Session, item: OrderItem, problems: list[Problem]) -> Recipe | None:
+    def _recipe_for(
+        session: Session, item: OrderItem, allergen_concerns: bool, problems: list[Problem]
+    ) -> Recipe | None:
         """The owner-approved recipe for an item (one recipe per product, §15)."""
         if item.resolved_recipe_id is not None:
             recipe = session.get(Recipe, item.resolved_recipe_id)
@@ -206,6 +242,16 @@ class InventoryService:
                 )
                 return None
             return recipe
+        if allergen_concerns:
+            # Stated allergen concerns are settled by the owner first (UC-01 3c).
+            problems.append(
+                Problem(
+                    ProblemKind.ALLERGEN_REVIEW_REQUIRED,
+                    "order has allergen concerns but no owner-approved recipe",
+                    item.order_item_id,
+                )
+            )
+            return None
         if (item.customisation or "").strip().lower() not in _STANDARD:
             # Ingredient-changing requests are settled by the owner first (UC-01 3b).
             problems.append(

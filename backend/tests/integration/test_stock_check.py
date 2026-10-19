@@ -243,3 +243,47 @@ def test_cancelled_order_is_not_checked(store, seeded, inventory):
 
     assert error.value.problems[0].kind is ProblemKind.ORDER_CLOSED
     assert count(store, ShoppingList) == 0
+
+
+def order_with_allergens(store, seeded, concerns, recipe_id=None):
+    with store.unit_of_work() as session:
+        order = Order(
+            customer_id=seeded.customer_id,
+            required_at=REQUIRED_AT,
+            allergen_concerns=concerns,
+            items=[
+                OrderItem(
+                    product_id=seeded.products["Vanilla cupcake"],
+                    quantity=24,
+                    resolved_recipe_id=recipe_id,
+                )
+            ],
+        )
+        return store.commit(session, order, actor_id=seeded.owner_id, action="order.draft")
+
+
+def test_allergen_concerns_need_an_owner_resolved_recipe(store, seeded, inventory):
+    ref = order_with_allergens(store, seeded, ["tree nuts"])
+
+    with pytest.raises(StockCheckError) as error:
+        inventory.run_stock_check(ref.record_id, expected_order_version=1, actor_id=seeded.owner_id)
+
+    assert [problem.kind for problem in error.value.problems] == [ProblemKind.ALLERGEN_REVIEW_REQUIRED]
+    assert count(store, ShoppingList) == 0
+
+
+def test_owner_resolved_recipe_clears_allergen_concerns(store, seeded, inventory):
+    ref = order_with_allergens(store, seeded, ["tree nuts"], seeded.recipes["Vanilla cupcake"])
+
+    result = inventory.run_stock_check(ref.record_id, expected_order_version=1, actor_id=seeded.owner_id)
+
+    assert result.requirements[seeded.items["Flour"]] == Decimal("600.000")
+
+
+@pytest.mark.parametrize("concerns", [[], None], ids=["stated-none", "not-recorded"])
+def test_no_allergen_concerns_use_the_standard_recipe(store, seeded, inventory, concerns):
+    ref = order_with_allergens(store, seeded, concerns)
+
+    result = inventory.run_stock_check(ref.record_id, expected_order_version=1, actor_id=seeded.owner_id)
+
+    assert result.requirements[seeded.items["Flour"]] == Decimal("600.000")
