@@ -250,3 +250,38 @@ def test_standard_marker_never_bypasses_allergen_review(environment):
     preview = flow.preview(customer, "24 vanilla cupcakes, peanut allergy")
     assert preview["confirmationToken"] is None
     assert "owner review" in " ".join(preview["issues"])
+
+
+@pytest.mark.parametrize("statement", ["No allergies, thanks", "No allergies, thank you!", "no allergy concerns thanks."])
+def test_polite_no_allergies_statement_is_accepted(environment, statement):
+    flow, customer, _ = service(environment, valid_data() | {"allergen_statement": statement})
+    assert flow.preview(customer, f"24 vanilla cupcakes. {statement}")["confirmationToken"]
+
+
+@pytest.mark.parametrize("statement", ["No allergies, except peanuts", "No allergies but avoid milk", "No allergies?", "No allergies, thanks, except eggs"])
+def test_qualifications_are_not_treated_as_no_concerns(environment, statement):
+    flow, customer, _ = service(environment, valid_data() | {"allergen_statement": statement})
+    assert flow.preview(customer, f"24 vanilla cupcakes. {statement}")["confirmationToken"] is None
+
+
+def test_configured_key_survives_router_recreation(environment):
+    store, identity = environment
+    def client():
+        app = FastAPI()
+        app.include_router(make_router(Settings(_env_file=None, app_secret="test-only-stable-key-for-summary-signing"), store=store,
+                                       client_factory=lambda _: MockLLMClient(default_reply=json.dumps(valid_data()))))
+        app.dependency_overrides[current_customer] = lambda: identity
+        app.dependency_overrides[check_csrf] = lambda: None
+        return TestClient(app)
+    token = client().post("/api/order-requests", json={"message": "24 cupcakes, no allergy concerns"}).json()["confirmationToken"]
+    receipt = client().post("/api/order-requests/confirm", json={"confirmationToken": token})
+    assert receipt.status_code == 200
+    assert receipt.json()["status"] == "Draft"
+
+def test_demo_missing_client_is_forbidden(environment, monkeypatch):
+    import app.sales.demo as demo
+    store, _ = environment
+    monkeypatch.setattr(demo, "get_settings", lambda: Settings(_env_file=None, database_url="sqlite://", app_secret=""))
+    monkeypatch.setattr(demo, "get_sessionmaker", lambda _: store._sessions)
+    with TestClient(demo.create_demo_app(), client=None, base_url="http://localhost") as client:
+        assert client.get("/api/session").status_code == 403

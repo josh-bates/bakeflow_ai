@@ -43,7 +43,7 @@ class ConfirmBody(BaseModel):
 def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None,
                 client_factory: Callable | None = None) -> APIRouter:
     router = APIRouter()
-    secret = secrets.token_bytes(32)
+    secret = settings.summary_signing_secret()
 
     def service(message: str = "") -> OrderIntake:
         actual_store = store

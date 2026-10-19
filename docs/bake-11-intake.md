@@ -8,7 +8,7 @@ This branch integrates BAKE-10 (#7), BAKE-7 (#8), BAKE-8 (#4), BAKE-9 (#5) and m
 
 - `POST /api/order-requests {message}` returns `summary`, `issues`, and an optional signed `confirmationToken`. It does not save an Order.
 - `POST /api/order-requests/confirm {confirmationToken}` revalidates the signed, customer-bound summary and writes an Order plus its AuditEntry through ValidatedRecordStore in one transaction. Response contains `orderId` and `status: Draft` only after commit. No stock or recipe changes occur.
-- Repeat confirmation of the same token returns the same order. A PostgreSQL customer-row lock serialises concurrent confirmations. Summaries expire after 30 minutes and a process restart invalidates outstanding tokens; review a new summary then. This is a single-process prototype, not a distributed session design.
+- Repeat confirmation of the same token returns the same order. A PostgreSQL customer-row lock serialises concurrent confirmations. Summaries expire after 30 minutes. Configure the same private `BAKEFLOW_APP_SECRET` for all workers and restarts; only development may fall back to a temporary key that invalidates summaries on restart. Authentication/session integration remains BAKE-14.
 - `GET /api/orders/mine` filters by the server-supplied customer identity.
 - Normal routes fail closed until BAKE-14 supplies `current_customer` and the session's `request.state.csrf_token`. No customer IDs are accepted from request JSON. The explicit local demo below is not a production login system.
 
@@ -68,3 +68,13 @@ This launcher runs a native PostgreSQL 16.2 server, applies migrations, seeds on
 - Screenshot: [summary before confirmation](evidence/bake-11/summary-before-confirmation.png). This captures Mock extraction with real local database persistence, not a live LLM test. Jira attachment and team review remain outstanding.
 
 BAKE-14 authentication integration is still pending. Live provider extraction has not been exercised; no API key is required for these Mock tests.
+
+
+### PR review follow-up
+
+- Signing reads the private `BAKEFLOW_APP_SECRET`; all workers must use the same value. Missing keys are refused outside development, and configured keys must contain at least 32 bytes. Development fallback logs its restart/worker limitation without exposing the key. Alembic preserves application loggers when configuring migration logging.
+- CI uses Python 3.13, matching Docker. The optional native PostgreSQL helper's Windows/Python 3.13 compatibility limitation is documented in README; Compose remains supported.
+- The local demo denies requests with no client address rather than raising an exception.
+- Explicit no-concern statements can end with “thanks” or “thank you”. Extra qualifications such as “except peanuts” still block confirmation; the source-quote requirement is unchanged.
+
+Review fixes validated with Python 3.13 and a fresh PostgreSQL database: all 205 backend tests passed, none skipped.

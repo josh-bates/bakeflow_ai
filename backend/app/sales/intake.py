@@ -159,7 +159,8 @@ class OrderIntake(WorkflowService):
         absent = not statement or statement.casefold() not in message.casefold()
         if not absent and summary.allergen_concerns == []:
             absent = not re.fullmatch(
-                r"(?:no (?:known )?allerg(?:ies|y concerns)|allerg(?:ies|y concerns):? none)[.!]?",
+                r"(?:no (?:known )?allerg(?:ies|y concerns)|allerg(?:ies|y concerns):? none)"
+                r"(?:,?\s+(?:thanks|thank you))?[.!]?",
                 statement.strip(), re.IGNORECASE,
             )
         if absent:

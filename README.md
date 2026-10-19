@@ -49,7 +49,7 @@ See [repository setup and Jira handoff](docs/repository-setup.md).
 
 ## Run locally
 
-You need Docker Desktop (Compose v2). To run the backend tests without Docker you need Python 3.11 or newer; the image uses 3.13.
+You need Docker Desktop (Compose v2). Use Python 3.13 for backend tests to match the Docker image and CI.
 
 ### App and database
 
@@ -131,3 +131,10 @@ as a fallback. This section will be updated once the team confirms it.
 
 The gateway makes exactly one provider call per request and does not retry. The
 retry budget belongs to `WorkflowService` (BAKE-8).
+
+
+### BAKE-11 summary signing and optional local demo
+
+Set `BAKEFLOW_APP_SECRET` in your private `.env` to a randomly generated value of at least 32 bytes (see `.env.example`). Use the same value across restarts and workers so pending summaries remain valid until their 30-minute expiry. Changing it invalidates pending summaries. Only `development` permits an empty setting, with a warning and a temporary random key; other environments refuse to start without it.
+
+The optional `backend/requirements-local-demo.txt` installs native PostgreSQL via `pgserver==0.1.4`. Its wheel availability depends on OS and Python version: it was tested here on macOS with Python 3.12, and installation is not available on the reviewed Windows/Python 3.13 setup. If pip reports “No matching distribution”, use the supported Docker Compose instructions above. This optional launcher is not required by the application, CI or Docker deployment.

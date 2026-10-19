@@ -34,6 +34,7 @@ def create_demo_app():
         host = request.url.hostname
         origin = request.headers.get("origin")
         if (host not in {"127.0.0.1", "localhost", "::1"}
+                or request.client is None
                 or request.client.host not in {"127.0.0.1", "::1"}
                 or (origin and urlsplit(origin).netloc != request.url.netloc)):
             return JSONResponse({"detail": "Local demo only."}, status_code=403)
