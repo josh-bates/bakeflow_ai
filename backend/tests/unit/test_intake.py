@@ -214,3 +214,39 @@ def test_unrelated_quote_does_not_establish_no_allergies(environment):
     data = valid_data() | {"allergen_statement": "24 vanilla cupcakes"}
     flow, customer, _ = service(environment, data)
     assert flow.preview(customer, "24 vanilla cupcakes")["confirmationToken"] is None
+
+
+@pytest.mark.parametrize("customisation", [None, "", "standard", " Standard ", "STANDARD"])
+def test_standard_items_save_without_a_resolved_recipe(environment, customisation):
+    data = valid_data()
+    data["items"][0]["customisation"] = customisation
+    flow, customer, _ = service(environment, data)
+    preview = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")
+    assert preview["issues"] == []
+    assert preview["summary"]["items"][0]["customisation"] is None
+    flow.confirm(customer, preview["confirmationToken"])
+    with flow.store.unit_of_work() as db:
+        item = db.scalars(select(Order)).one().items[0]
+        assert item.customisation is None
+        assert item.resolved_recipe_id is None
+        audit = db.scalars(select(AuditEntry).where(AuditEntry.action == "order.draft_created")).one()
+        assert audit.after_data["items"][0]["customisation"] is None
+
+
+@pytest.mark.parametrize("customisation", ["standard, no eggs", "non-standard", "replace eggs"])
+def test_nonstandard_customisation_still_requires_owner_review(environment, customisation):
+    data = valid_data()
+    data["items"][0]["customisation"] = customisation
+    flow, customer, _ = service(environment, data)
+    preview = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")
+    assert preview["confirmationToken"] is None
+    assert "owner review" in " ".join(preview["issues"])
+
+
+def test_standard_marker_never_bypasses_allergen_review(environment):
+    data = valid_data() | {"allergen_concerns": ["peanut allergy"], "allergen_statement": "peanut allergy"}
+    data["items"][0]["customisation"] = "standard"
+    flow, customer, _ = service(environment, data)
+    preview = flow.preview(customer, "24 vanilla cupcakes, peanut allergy")
+    assert preview["confirmationToken"] is None
+    assert "owner review" in " ".join(preview["issues"])

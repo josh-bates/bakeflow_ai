@@ -13,7 +13,7 @@ from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, StrictInt, field_validator
 from sqlalchemy import select
 
 from app.llm.gateway import ILLMClient, parse_structured_reply
@@ -35,6 +35,15 @@ class ItemInterpretation(BaseModel):
     flavour: str | None = Field(default=None, max_length=200)
     theme: str | None = Field(default=None, max_length=500)
     customisation: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("customisation")
+    @classmethod
+    def normalise_standard_customisation(cls, value: str | None) -> str | None:
+        # BAKE-12 uses the product recipe for standard items without a resolved recipe.
+        # Only the exact marker is standard; e.g. "standard, no eggs" still needs review.
+        if value is None or value.casefold() in {"", "standard"}:
+            return None
+        return value
 
 
 class OrderInterpretation(BaseModel):
