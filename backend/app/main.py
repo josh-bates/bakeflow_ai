@@ -39,6 +39,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail="database unavailable") from None
         return {"status": "ok", "database": "ok"}
 
+    from app.sales.routes import make_router
+    app.include_router(make_router(settings))
+
     # Registered last so that every /api route above takes precedence.
     _serve_frontend(app, settings.frontend_dist)
     return app

@@ -26,6 +26,7 @@ from app.db.base import Base
 from app.shared.records._common import (
     InPlaceVersioned,
     Money,
+    Json,
     OrderStatus,
     Timestamp,
     new_id,
@@ -40,6 +41,7 @@ class Order(InPlaceVersioned, Base):
     __record_id__ = "order_id"
     __table_args__ = (
         one_of("status", OrderStatus, "status"),
+        CheckConstraint("collection_kind IN ('at', 'before')", name="collection_kind"),
         CheckConstraint("budget IS NULL OR budget >= 0", name="budget_nonnegative"),
         CheckConstraint(
             "(accepted_quote_id IS NULL) = (accepted_quote_version IS NULL)",
@@ -61,6 +63,9 @@ class Order(InPlaceVersioned, Base):
     # Collection time (UC-01), stored in UTC.
     required_at: Mapped[datetime] = mapped_column(Timestamp)
     budget: Mapped[Decimal | None] = mapped_column(Money)
+    # UC-01: preserve customer disclosures and collection deadline semantics.
+    allergen_concerns: Mapped[list[str] | None] = mapped_column(Json, nullable=True)
+    collection_kind: Mapped[str] = mapped_column(String(8), default="at")
     accepted_quote_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     accepted_quote_version: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(Timestamp, default=utcnow)

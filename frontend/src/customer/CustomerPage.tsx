@@ -1,0 +1,258 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  api,
+  ApiError,
+  type Order,
+  type Session,
+  type Submission,
+  type DraftReceipt,
+} from "../api/client";
+import { Notice } from "../components/Notice";
+
+export function CustomerPage({
+  session,
+  onExpired,
+}: {
+  session: Session;
+  onExpired: () => void;
+}) {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [reload, setReload] = useState(0);
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<Submission | null>(null);
+  const [saved, setSaved] = useState<DraftReceipt | null>(null);
+  const pending = useRef(false);
+  const attempt = useRef<{ message: string; key: string } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError("");
+    api
+      .orders()
+      .then((data) => {
+        if (active) setOrders(data);
+      })
+      .catch((e: Error) => {
+        if (!active) return;
+        if (e instanceof ApiError && e.status === 401) onExpired();
+        else setLoadError(e.message);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [reload, onExpired]);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (pending.current) return;
+    const text = message.trim();
+    if (!text) {
+      setError("Please describe what you would like to order.");
+      return;
+    }
+    pending.current = true;
+    setSending(true);
+    setError("");
+    setResult(null);
+    setSaved(null);
+    // Reuse the key after an uncertain response so a retry cannot create a second intake.
+    if (attempt.current?.message !== text)
+      attempt.current = { message: text, key: crypto.randomUUID() };
+    try {
+      const response = await api.submit(
+        text,
+        session.csrfToken,
+        attempt.current.key,
+      );
+      setResult(response);
+      attempt.current = null;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onExpired();
+      else
+        setError(
+          `${(e as Error).message} No draft was saved. Your text has been kept so you can try again.`,
+        );
+    } finally {
+      pending.current = false;
+      setSending(false);
+    }
+  }
+
+  async function confirm() {
+    if (pending.current || !result?.confirmationToken || result.issues.length) return;
+    pending.current = true;
+    setSending(true);
+    setError("");
+    try {
+      const receipt = await api.confirm(result.confirmationToken, session.csrfToken);
+      setSaved(receipt);
+      setResult(null);
+      setMessage("");
+      setReload(value => value + 1);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onExpired();
+      else setError(`${(e as Error).message} Saving has not been confirmed. Retry confirmation to check the same order.`);
+    } finally {
+      pending.current = false;
+      setSending(false);
+    }
+  }
+
+  return (
+    <>
+      <section className="dessert-hero" aria-labelledby="hero-title">
+        <div className="hero-copy">
+          <p className="eyebrow">BAKEFLOW / THE JOY OF BAKING</p>
+          <h1 id="hero-title">Thoughtfully baked.<br /><em>For every occasion.</em></h1>
+          <p>Something freshly baked for everyday moments and special occasions. Tell us what you have in mind.</p>
+          <div className="hero-actions">
+            <button className="primary" onClick={() => { document.getElementById('request-title')?.scrollIntoView({ block: 'start' }); document.getElementById('order-request')?.focus({ preventScroll: true }); }}>Start a custom order <span aria-hidden="true">↗</span></button>
+            <button className="text-button" onClick={() => { document.getElementById('orders-title')?.scrollIntoView({ block: 'start' }); document.getElementById('orders-title')?.focus({ preventScroll: true }); }}>View my orders <span aria-hidden="true">→</span></button>
+          </div>
+          <p className="hero-note">Everyday favourites. Special moments. Made for you.</p>
+        </div>
+        <figure className="hero-photo">
+          <img src="/images/chocolate-cake.jpg" alt="Layered chocolate cake with red berries and cocoa on a white ceramic plate" width="1600" height="900" fetchPriority="high" />
+          <figcaption><span>A MOMENT OF SWEETNESS</span><span>01 / Chocolate</span></figcaption>
+        </figure>
+      </section>
+      <div className="customer-grid">
+        <section className="card" aria-labelledby="request-title">
+          <div className="request-intro">
+          <div className="section-number">01 / MADE FOR YOU</div>
+          <h2 id="request-title">Request a custom order</h2>
+          <p className="muted">
+            Include the product, quantity, flavours and collection date and time.
+            State any allergy concerns, or explicitly say you have none.
+          </p>
+          </div>
+          <form onSubmit={submit}>
+            <label htmlFor="order-request">What would you like to order?</label>
+            <textarea
+              id="order-request"
+              value={message}
+              maxLength={4000}
+              required
+              disabled={sending}
+              onChange={(e) => {
+                setMessage(e.target.value);
+                setResult(null);
+                setSaved(null);
+                setError("");
+              }}
+              placeholder="24 vanilla birthday cupcakes for collection on 2 Oct before 12:00, no allergy concerns"
+              aria-describedby="request-help"
+            />
+            <p id="request-help" className="field-help">
+              Review your summary before saving a draft. A draft is not a confirmed sale and no payment is taken.
+            </p>
+            {error && <Notice error>{error}</Notice>}
+            {saved && <Notice><strong>Draft saved · {saved.orderId}</strong><br />Your requirements are saved. This is not a confirmed sale.</Notice>}
+            <button className="primary" type="submit" disabled={sending}>
+              {sending ? "Sending request…" : "Send order request"}{" "}
+              <span aria-hidden="true">↗</span>
+            </button>
+          </form>
+          {session.mode === "mock" && !result && <p className="field-help">Offline demo: use the example in the text box. Mock mode supports preset examples only.</p>}
+          {result && (
+            <section className="order-summary" aria-labelledby="summary-title" aria-live="polite">
+              <p className="eyebrow">REVIEW YOUR REQUEST</p>
+              <h3 id="summary-title">Your order summary</h3>
+              <ul>{result.summary.items.map((item, index) => <li key={index}>
+                <strong>{item.quantity ?? "Quantity needed"} × {item.product}</strong>
+                {item.flavour && <p>Flavour: {item.flavour}</p>}
+                {item.theme && <p>Theme: {item.theme}</p>}
+                {item.customisation && <p>Customisation: {item.customisation}</p>}
+              </li>)}</ul>
+              <dl>
+                <dt>Collection ({result.summary.collection_kind === "before" ? "before" : "at"})</dt>
+                <dd>{result.summary.required_at ? new Intl.DateTimeFormat("en-AU", { dateStyle: "full", timeStyle: "short", timeZone: "Australia/Sydney" }).format(new Date(result.summary.required_at)) : "Not provided"} · Australia/Sydney</dd>
+                <dt>Allergen concerns</dt><dd>{result.summary.allergen_concerns === null ? "Not provided" : result.summary.allergen_concerns.length ? result.summary.allergen_concerns.join(", ") : "No concerns stated by you"}</dd>
+                <dt>Budget (AUD)</dt><dd>{result.summary.budget ?? "Not specified"}</dd>
+              </dl>
+              <p className="field-help">Check the full date and year. If you omitted a year, the next occurrence is shown. No draft has been saved yet.</p>
+              {result.issues.length > 0 && <Notice error><ul>{result.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></Notice>}
+              <div className="hero-actions">
+                <button className="secondary" disabled={sending} onClick={() => { setResult(null); setError(""); document.getElementById("order-request")?.focus(); }}>Correct my request</button>
+                <button className="primary" disabled={sending || !result.confirmationToken || result.issues.length > 0} onClick={confirm}>{sending ? "Saving draft…" : "Confirm and save draft"}</button>
+              </div>
+            </section>
+          )}
+        </section>
+      </div>
+      <section className="card orders" aria-labelledby="orders-title">
+        <div className="section-heading">
+          <div>
+            <div className="section-number">02 / YOUR COLLECTION</div>
+            <h2 id="orders-title" tabIndex={-1}>Your orders</h2>
+          </div>
+          <button
+            className="secondary"
+            disabled={loading}
+            onClick={() => setReload((value) => value + 1)}
+          >
+            Refresh orders
+          </button>
+        </div>
+        {loading ? (
+          <Notice>Loading your orders…</Notice>
+        ) : loadError ? (
+          <Notice error>{loadError}</Notice>
+        ) : orders.length === 0 ? (
+          <div className="empty">
+            <span aria-hidden="true">◇</span>
+            <h3>No orders yet</h3>
+            <p>
+              Your draft orders will appear here after you confirm the summary.
+            </p>
+          </div>
+        ) : (
+          <div className="table-scroll">
+            <table>
+              <caption className="sr-only">
+                Orders belonging to your signed-in account
+              </caption>
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Details</th>
+                  <th>Required time</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((order) => (
+                  <tr key={order.id}>
+                    <th scope="row">{order.id}</th>
+                    <td>{order.summary}</td>
+                    <td>
+                      {order.requiredAt
+                        ? new Intl.DateTimeFormat("en-AU", {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                            timeZone: "Australia/Sydney",
+                          }).format(new Date(order.requiredAt))
+                        : "To be arranged"}
+                    </td>
+                    <td>
+                      <span className="badge">{order.status}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="field-help">Times shown in Australia/Sydney.</p>
+          </div>
+        )}
+      </section>
+    </>
+  );
+}

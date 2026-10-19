@@ -8,8 +8,12 @@ secret is committed (architecture §7.1). See ``.env.example``.
 
 from __future__ import annotations
 
+import logging
+import secrets
+
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import SecretStr, field_validator
@@ -27,6 +31,8 @@ class Settings(BaseSettings):
     )
 
     environment: str = "development"
+    app_secret: SecretStr | None = None
+    llm_mode: Literal["mock", "live"] = "mock"
     # SQLAlchemy URL, e.g. postgresql+psycopg://user:password@db:5432/bakeflow.
     # None means "no database": the app still starts, readiness reports 503.
     database_url: str | None = None
@@ -37,6 +43,20 @@ class Settings(BaseSettings):
     # Demo account passwords used by `python -m app.seed` (BAKE-7).
     seed_owner_password: SecretStr | None = None
     seed_customer_password: SecretStr | None = None
+
+    def summary_signing_secret(self) -> bytes:
+        value = self.app_secret.get_secret_value() if self.app_secret else ""
+        if value:
+            if len(value.encode("utf-8")) < 32:
+                raise ValueError("BAKEFLOW_APP_SECRET must contain at least 32 bytes.")
+            return value.encode("utf-8")
+        if self.environment != "development":
+            raise ValueError("BAKEFLOW_APP_SECRET is required outside development.")
+        logging.getLogger(__name__).warning(
+            "BAKEFLOW_APP_SECRET is unset: development summaries expire on restart "
+            "and cannot be shared between workers."
+        )
+        return secrets.token_bytes(32)
 
     @field_validator("timezone")
     @classmethod
