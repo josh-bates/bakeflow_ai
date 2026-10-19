@@ -62,6 +62,7 @@ docker compose exec app python -m app.seed    # demo data into the empty databas
 
 To start the demo data again from scratch: `docker compose exec app python -m app.seed --reset --yes`. This deletes all business data, so it is refused unless `BAKEFLOW_ENVIRONMENT` is `development`, `demo` or `test`. The seed creates the logins `owner@bakeflow.test` and `customer@bakeflow.test` with the passwords from `.env`.
 
+- <http://localhost:8000/> shows the UI. The image builds it from `frontend/` with Node 22 and pnpm, so you do not need Node installed to run the app.
 - <http://localhost:8000/api/health/ready> returns `{"status":"ok","database":"ok"}` once the app can reach PostgreSQL.
 - <http://localhost:8000/docs> shows the generated API documentation.
 - The app applies Alembic migrations when it starts. The database is reachable only from the app container, and the app port is bound to `127.0.0.1`.
@@ -105,7 +106,7 @@ Each module is a package inside one application, so all four members can work in
 | `backend/app/marketing/` | Marketing: UC-07, UC-08 |
 | `backend/alembic/` | Migrations; the database URL comes from `BAKEFLOW_DATABASE_URL` |
 | `backend/tests/` | pytest suites |
-| `frontend/` | UI: React + TypeScript + Vite browser shell (BAKE-10, not created yet); its build output `frontend/dist` is served by the backend |
+| `frontend/` | UI: React + TypeScript + Vite browser shell (BAKE-10); its build output `frontend/dist` is served by the backend |
 | `Dockerfile`, `compose.yaml` | One app image plus PostgreSQL (architecture §7.1) |
 
 
