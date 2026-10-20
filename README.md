@@ -28,6 +28,7 @@ These are the report's design responsibilities, not a claim about completed impl
 - [Stage Two assessment and evidence](docs/stage-two.md)
 - [Stage Two architecture proposal (draft, pending team review)](docs/architecture.md)
 - [Jira handoff and initial backlog](docs/jira-handoff.md)
+- [Sprint 2 plan: Pricing and Bookkeeping](docs/sprint-2-pricing-bookkeeping-plan.md)
 - [Contribution workflow](CONTRIBUTING.md)
 - [Source material inventory](docs/source-materials.md)
 - [Original Stage One report](docs/reference/stage-1-report.pdf)
