@@ -86,6 +86,21 @@ BAKEFLOW_TEST_DATABASE_URL=postgresql+psycopg://bakeflow_test:bakeflow_test@127.
 
 They rebuild the schema with the migrations, so never point them at a database you need. Dependencies are pinned exactly in `backend/requirements.txt` (runtime) and `backend/requirements-dev.txt` (tests); change pins deliberately in their own PR.
 
+Lint the backend before pushing with `ruff check .` (from `backend/`, after installing `requirements-dev.txt`).
+
+### Continuous integration
+
+GitHub Actions runs two checks on every pull request and on every push to `main`:
+
+| Workflow | Steps |
+| --- | --- |
+| **Backend** (`.github/workflows/backend.yml`) | Install the pinned dependencies, `ruff check .`, then `pytest` against a PostgreSQL 17 service. Integration tests apply the Alembic migrations. |
+| **Frontend** (`.github/workflows/frontend.yml`) | `pnpm install --frozen-lockfile`, `pnpm test` (Vitest), `pnpm build` (strict TypeScript check + Vite build) |
+
+Both checks need no secrets and never call a live LLM: CI uses the Mock client and fixtures. A pull request can be merged into `main` only once both checks pass and one teammate has approved it.
+
+Why CI matters for this prototype: four people are integrating modules in parallel against shared contracts (records, the workflow, approvals). CI runs the business-rule tests on every change, including the deterministic money, stock and version-approval checks. That is how a change that breaks someone else's module gets caught before it reaches `main` or the Canvas submission. It also leaves a reviewable record that each merged change was tested. See [docs/bake-27-ci.md](docs/bake-27-ci.md).
+
 ### Project layout
 
 Each module is a package inside one application, so all four members can work in parallel (architecture §6.1). Put new code in the package that owns it, and import other modules only through `shared/`.
