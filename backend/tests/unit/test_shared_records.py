@@ -11,6 +11,7 @@ from decimal import Decimal
 import pytest
 
 from app.db.base import Base
+import app.auth.models  # Register infrastructure alongside shared records.
 from app.seed import INGREDIENTS, PRODUCTS, SETTINGS
 from app.shared import RecordRef, ValidatedRecordStore
 from app.shared.passwords import hash_password, verify_password
@@ -37,8 +38,8 @@ CORE_TABLES = {
 }
 
 
-def test_metadata_has_exactly_the_stage1_core_tables():
-    assert set(Base.metadata.tables) == CORE_TABLES
+def test_metadata_has_stage1_core_tables_and_session_infrastructure():
+    assert set(Base.metadata.tables) == CORE_TABLES | {"auth_sessions"}
 
 
 def test_record_ref_round_trips_through_the_wire_shape():
