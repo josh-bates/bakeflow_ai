@@ -1,8 +1,8 @@
 """BAKE-20: ProductionService.validate enforces IP-05 on a proposed plan.
 
 Jira tests: the validator rejects overlap, an over-capacity day, a late task
-and an empty schedule. Also coverage, plan days and the one-team rule against
-tasks of other released plans.
+and an empty schedule. Also coverage, plan days, the one-team rule against
+tasks of other released plans, and capacity measured to the second.
 """
 
 import uuid
@@ -76,6 +76,20 @@ def test_over_capacity_day_is_rejected():
 
     assert kinds(violations) == [ViolationKind.OVER_CAPACITY]
     assert "300 minutes" in violations[0].message
+
+
+def test_capacity_counts_seconds_not_whole_minutes():
+    # Two tasks of 120 min 59 s: 241 min 58 s against 240, though each is 120 whole minutes.
+    length = timedelta(minutes=120, seconds=59)
+    plan = [
+        PlannedTask(A, "bake", at(6), at(6) + length),
+        PlannedTask(A, "finish", at(6) + length, at(6) + 2 * length),
+    ]
+
+    violations = validate(plan)
+
+    assert kinds(violations) == [ViolationKind.OVER_CAPACITY]
+    assert "242 minutes" in violations[0].message
 
 
 def test_late_task_is_rejected():

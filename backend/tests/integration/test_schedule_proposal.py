@@ -7,10 +7,16 @@ nothing is saved (4a); an infeasible plan is explained to the owner (5a); a
 valid Mock proposal is accepted. Architecture TX-PLAN-DRAFT: the draft is
 rechecked under the shared guard and saved as a schedule version that commits
 no stock until it is released.
+
+Review before the PR: the save rechecks capacity and labour minutes changed
+while the agent ran; a revision re-plans its own Scheduled orders, replaces
+all of its released commitments and gives a task moved back to its released
+time the released ID; a saved version is audited and cannot change.
 """
 
 import json
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -19,11 +25,14 @@ from sqlalchemy import func, select
 from app.inventory_production import InventoryService, PlanStatus, ProductionPlanner
 from app.inventory_production.fixtures import GreedyMockPlanner, proposal_reply
 from app.llm.gateway import MockLLMClient
+from app.shared import RecordValidationError, UnauditedWriteError
 from app.shared.records import (
     AuditEntry,
+    BakerySettings,
     Order,
     OrderItem,
     OrderStatus,
+    Product,
     ProductionSchedule,
     ProductionScheduleVersion,
     ProductionTask,
@@ -196,31 +205,68 @@ def test_no_candidates_means_no_model_call(store, seeded):
     assert client.calls == []
 
 
-class EditingClient:
-    """Replies with a valid plan after the order is edited meanwhile."""
+class ChangingClient:
+    """Replies with ``reply`` after running ``change``, as if it happened while the agent ran."""
 
-    def __init__(self, store, seeded, ref):
-        self.store, self.seeded, self.ref, self.calls = store, seeded, ref, []
+    def __init__(self, change, reply):
+        self.change, self.reply, self.calls = change, reply, []
 
     def complete(self, prompt):
+        if not self.calls:
+            self.change()
         self.calls.append(prompt)
-        with self.store.unit_of_work() as session:
-            record = self.store.load(session, Order, self.ref.record_id)
-            record.items[0].quantity = 12
-            self.store.commit(
-                session, record, actor_id=self.seeded.owner_id, action="test.edit",
-                expected_version=self.ref.version, revise=True,
-            )
-        return proposal_reply(figure10(self.ref))
+        return self.reply
+
+
+def change_quantity(store, seeded, ref, cupcakes):
+    with store.unit_of_work() as session:
+        record = store.load(session, Order, ref.record_id)
+        record.items[0].quantity = cupcakes
+        store.commit(
+            session, record, actor_id=seeded.owner_id, action="test.edit",
+            expected_version=ref.version, revise=True,
+        )
 
 
 def test_order_changed_while_planning_is_not_saved(store, seeded):
     ref = order(store, seeded)
+    client = ChangingClient(lambda: change_quantity(store, seeded, ref, 12), proposal_reply(figure10(ref)))
 
-    outcome = propose(store, seeded, EditingClient(store, seeded, ref))
+    outcome = propose(store, seeded, client)
 
     assert outcome.status is PlanStatus.NEEDS_REVISION
     assert "changed while the plan was prepared" in outcome.problems[0]
+    assert count(store, ProductionSchedule) == 0
+
+
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ("capacity", "has 90 minutes of work; the team has 60."),
+        ("labour", "gets 90 minutes of work but needs 180."),
+    ],
+)
+def test_capacity_and_labour_changed_while_planning_are_rechecked(store, seeded, change, problem):
+    ref = order(store, seeded)
+
+    def edit():
+        with store.constraint_guard() as session:
+            if change == "capacity":
+                settings = session.scalars(select(BakerySettings)).one()
+                settings.default_daily_capacity_minutes = 60
+                store.commit(
+                    session, settings, actor_id=seeded.owner_id, action="test.capacity",
+                    expected_version=settings.version, revise=True,
+                )
+            else:
+                product = session.get(Product, seeded.products["Vanilla cupcake"])
+                product.labour_minutes = Decimal("7.500")  # 24 cupcakes: 180 minutes
+                store.commit(session, product, actor_id=seeded.owner_id, action="test.labour")
+
+    outcome = propose(store, seeded, ChangingClient(edit, proposal_reply(figure10(ref))))
+
+    assert outcome.status is PlanStatus.NEEDS_REVISION
+    assert any(problem in p for p in outcome.problems), outcome.problems
     assert count(store, ProductionSchedule) == 0
 
 
@@ -248,19 +294,130 @@ def test_revision_is_the_next_version_and_unchanged_tasks_keep_their_identity(st
         assert store.load(session, ProductionSchedule, first.schedule_ref.record_id).released_version is None
 
 
+def release(store, seeded, outcome):
+    """Stand-in for BAKE-21's guarded release of the version ``outcome`` saved."""
+    with store.constraint_guard() as session:
+        schedule = store.load(session, ProductionSchedule, outcome.schedule_ref.record_id)
+        schedule.released_version = outcome.schedule_ref.version
+        store.commit(
+            session, schedule, actor_id=seeded.owner_id, action="test.release",
+            expected_version=schedule.version,
+        )
+
+
+def test_revision_re_plans_its_scheduled_orders(store, seeded):
+    ref = order(store, seeded)
+    first = propose(store, seeded, GreedyMockPlanner())
+    release(store, seeded, first)
+    with store.constraint_guard() as session:  # as BAKE-21's release will
+        record = store.load(session, Order, ref.record_id)
+        record.status = OrderStatus.SCHEDULED
+        store.commit(
+            session, record, actor_id=seeded.owner_id, action="test.scheduled", expected_version=ref.version
+        )
+    client = GreedyMockPlanner()
+
+    revision = propose(store, seeded, client, schedule_id=first.schedule_ref.record_id)
+
+    assert revision.status is PlanStatus.PROPOSED, revision.problems
+    assert requested_orders(client) == [str(ref.record_id)]
+    # A new plan still leaves it to the plan it is scheduled in.
+    assert propose(store, seeded, GreedyMockPlanner()).status is PlanStatus.NO_CANDIDATES
+
+
+def test_revision_replaces_all_of_its_released_commitments(store, seeded):
+    early, later = order(store, seeded, cupcakes=12, due=at(10)), order(store, seeded, due=at(12))
+    first = propose(store, seeded, GreedyMockPlanner())
+    release(store, seeded, first)  # commits 300 g + 600 g of the 1,000 g flour
+    change_quantity(store, seeded, early, 24)
+    change_quantity(store, seeded, later, 12)
+    client = GreedyMockPlanner()
+
+    revision = propose(store, seeded, client, schedule_id=first.schedule_ref.record_id)
+
+    # 600 g + 300 g replace the released 900 g. Checked against the other
+    # order's old 600 g, the early order alone would look 200 g short.
+    assert revision.status is PlanStatus.PROPOSED, revision.problems
+    assert requested_orders(client) == [str(early.record_id), str(later.record_id)]
+    assert revision.excluded == ()
+
+
+def test_revision_that_leaves_out_a_released_order_replaces_its_commitment_too(store, seeded):
+    early, later = order(store, seeded, cupcakes=12, due=at(10)), order(store, seeded, cupcakes=12, due=at(12))
+    first = propose(store, seeded, GreedyMockPlanner())
+    release(store, seeded, first)  # commits 300 g + 300 g of the 1,000 g flour
+    change_quantity(store, seeded, early, 40)  # 1,000 g
+    change_quantity(store, seeded, later, 48)  # 1,200 g: short on its own
+
+    revision = propose(store, seeded, GreedyMockPlanner(), schedule_id=first.schedule_ref.record_id)
+
+    # The save, too, must not count the left-out order's old 300 g.
+    assert revision.status is PlanStatus.PROPOSED, revision.problems
+    assert [(e.order_ref.record_id, e.reason) for e in revision.excluded] == [
+        (later.record_id, "Short of 200 g flour.")
+    ]
+
+
+def test_task_moved_back_to_its_released_time_gets_its_released_id(store, seeded):
+    ref = order(store, seeded)
+    first = propose(store, seeded, MockLLMClient(default_reply=proposal_reply(figure10(ref))))
+    release(store, seeded, first)
+    for start in (at(8), at(6)):  # version 2 moves both tasks; version 3 moves them back
+        revision = propose(
+            store, seeded, MockLLMClient(default_reply=proposal_reply(figure10(ref, start))),
+            schedule_id=first.schedule_ref.record_id,
+        )
+        assert revision.status is PlanStatus.PROPOSED, revision.problems
+
+    with store.unit_of_work() as session:
+        def logical(version):
+            return {
+                t.task_kind: t.logical_task_id
+                for t in session.scalars(select(ProductionTask).where(ProductionTask.schedule_version == version))
+            }
+        # Release carries progress over by these IDs [C1].
+        assert logical(3) == logical(1)
+        assert logical(2)["bake"] != logical(1)["bake"]
+
+
+def test_saved_version_is_audited_and_cannot_change(store, seeded):
+    ref = order(store, seeded)
+    outcome = propose(store, seeded, GreedyMockPlanner())
+    key = (outcome.schedule_ref.record_id, 1)
+    with store.unit_of_work() as session:
+        audit = session.scalars(
+            select(AuditEntry).where(AuditEntry.subject_type == "ProductionScheduleVersion")
+        ).one()
+        snapshot = session.get(ProductionScheduleVersion, key).requirements_snapshot
+        assert audit.after_data["requirements_snapshot"] == snapshot
+        assert list(snapshot) == [str(ref.record_id)]
+
+    # Emptying the snapshot of a released version would free its stock silently.
+    with pytest.raises(UnauditedWriteError):
+        with store.unit_of_work() as session:
+            session.get(ProductionScheduleVersion, key).requirements_snapshot = {}
+    with pytest.raises(RecordValidationError, match="cannot change"):
+        with store.unit_of_work() as session:
+            version = session.get(ProductionScheduleVersion, key)
+            version.requirements_snapshot = {}
+            store.commit(session, version, actor_id=seeded.owner_id, action="test.edit")
+
+    with store.unit_of_work() as session:
+        assert session.get(ProductionScheduleVersion, key).requirements_snapshot == snapshot
+
+
 def released_elsewhere(store, seeded, ref, start, minutes):
     """Another schedule whose released version holds ``ref`` from ``start``."""
     with store.unit_of_work() as session:
         schedule = ProductionSchedule(created_by=seeded.owner_id, released_version=1)
         store.commit(session, schedule, actor_id=seeded.owner_id, action="test.schedule")
-        session.add(
-            ProductionScheduleVersion(
-                schedule_id=schedule.schedule_id, version=1, start_date=DAY, end_date=DAY,
-                daily_capacity_minutes=240,
-                requirements_snapshot={str(ref.record_id): {str(seeded.items["Flour"]): "300.000"}},
-                source_order_refs=[ref.to_json()],
-            )
+        version = ProductionScheduleVersion(
+            schedule_id=schedule.schedule_id, version=1, start_date=DAY, end_date=DAY,
+            daily_capacity_minutes=240,
+            requirements_snapshot={str(ref.record_id): {str(seeded.items["Flour"]): "300.000"}},
+            source_order_refs=[ref.to_json()],
         )
+        store.commit(session, version, actor_id=seeded.owner_id, action="test.version")
         task = ProductionTask(
             schedule_id=schedule.schedule_id, schedule_version=1, order_id=ref.record_id,
             task_kind="bake", start_at=start, end_at=start + timedelta(minutes=minutes),

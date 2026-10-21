@@ -3,10 +3,13 @@
 ``ProductionPlanner.propose`` runs the architecture's ``SCHEDULE_REQUESTED`` row:
 
 1. Candidates (UC-04 1-2): Confirmed orders due in the plan's days that are
-   not in another released plan. Each must pass UC-03 (``calculate_needs``)
-   and have no shortage on its own after other plans' commitments (IP-02);
-   taken earliest-due first, an order that would make the plan short together
-   with the earlier ones is left out. Left-out orders are reported with why.
+   not in another released plan; a revision also re-plans the orders of its
+   own released version, which may be Scheduled or in production by then.
+   Each must pass UC-03 (``calculate_needs``) and have no shortage on its own
+   after other plans' commitments (IP-02); a revision replaces all of its
+   released version's commitments, not only one order's. Taken earliest-due
+   first, an order that would make the plan short together with the earlier
+   ones is left out. Left-out orders are reported with why.
 2. ``InventoryProductionAgent`` proposes tasks from a server-built
    ``TaskRequest`` (architecture §5.2). No database transaction is open while
    it runs.
@@ -16,9 +19,11 @@
    saved and the owner gets the last attempt's problems (UC-04 5a).
 4. ``TX-PLAN-DRAFT`` saves a usable proposal inside ``store.constraint_guard()``
    after rechecking that the orders are unchanged, the stock still covers the
-   plan (``check_plan``) and the team's day is still free. A new plan becomes
+   plan (``check_plan``) and the plan is still feasible with the current daily
+   capacity, labour minutes and other released plans. A new plan becomes
    ``ProductionSchedule`` version 1; a revision becomes the next version, and
-   tasks that did not change keep their ``logical_task_id`` [C1]. A draft
+   tasks that did not change keep their ``logical_task_id``, preferring the
+   released version's, which release matches progress against [C1]. A draft
    commits no stock: ``released_version`` is untouched until BAKE-21 releases
    it after owner approval, which also adds the approval request here.
 """
@@ -37,7 +42,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.inventory_production.inventory import InventoryService, StockCheckError
@@ -149,6 +154,7 @@ class _Candidate:
     ref: RecordRef
     demand: OrderDemand
     collection_kind: str
+    status: str
     items: list[dict] = field(default_factory=list)
 
 
@@ -174,10 +180,7 @@ class ProductionPlanner(WorkflowService):
         if end_date < start_date:
             raise ValueError("end_date is before start_date")
         with self.store.unit_of_work() as session:
-            settings = session.scalars(select(BakerySettings)).one()
-            window = PlanWindow(
-                start_date, end_date, settings.default_daily_capacity_minutes, ZoneInfo(settings.time_zone)
-            )
+            window = _window(session, start_date, end_date)
             schedule_version = None
             if schedule_id is not None:
                 schedule_version = self.store.load(session, ProductionSchedule, schedule_id).version
@@ -241,16 +244,21 @@ class ProductionPlanner(WorkflowService):
             return PlanOutcome(PlanStatus.NEEDS_REVISION, problems=problems, excluded=tuple(excluded))
 
         with self.store.constraint_guard() as session:
+            # Capacity and labour minutes may have changed while the agent ran.
+            window = _window(session, window.start_date, window.end_date)
+            products = {p.product_id: p for p in session.scalars(select(Product))}
             needs: dict[uuid.UUID, dict[uuid.UUID, Decimal]] = {}
+            demands: dict[uuid.UUID, OrderDemand] = {}
             for candidate in candidates:
                 label = f"Order {str(candidate.ref.record_id)[:8]}"
                 try:
                     order = self.store.load(
                         session, Order, candidate.ref.record_id, version=candidate.ref.version, lock=True
                     )
-                    if order.status != OrderStatus.CONFIRMED:
-                        return refused(f"{label} is no longer confirmed. Request a new plan.")
+                    if order.status != candidate.status:
+                        return refused(f"{label} is now {order.status}. Request a new plan.")
                     needs[order.order_id] = self.inventory.calculate_needs(session, order)
+                    demands[order.order_id] = OrderDemand(order.required_at, _work_minutes(order, products))
                 except StaleVersionError:
                     return refused(f"{label} changed while the plan was prepared. Request a new plan.")
                 except StockCheckError as exc:
@@ -259,12 +267,13 @@ class ProductionPlanner(WorkflowService):
             moved = [str(order_id)[:8] for order_id in needs if order_id in elsewhere]
             if moved:
                 return refused(f"Order {', '.join(moved)} is now in another released plan.")
-            shortages = self.inventory.check_plan(session, needs)
+            shortages = self.inventory.check_plan(
+                session, needs, exclude_orders=self._released_here(session, schedule_id)
+            )
             if shortages:
                 return refused(f"Stock no longer covers the plan: short of {_amounts(session, shortages)}.")
             violations = self.production.validate(
-                tasks, window=window, orders={c.ref.record_id: c.demand for c in candidates},
-                busy=self._busy(session, window, schedule_id),
+                tasks, window=window, orders=demands, busy=self._busy(session, window, schedule_id)
             )
             if violations:
                 return refused(*(v.message for v in violations))
@@ -275,7 +284,9 @@ class ProductionPlanner(WorkflowService):
                 previous: dict[tuple, uuid.UUID] = {}
             else:
                 schedule = self.store.load(session, ProductionSchedule, schedule_id)
-                previous = self._logical_ids(session, schedule_id, schedule_version)
+                previous = self._logical_ids(
+                    session, schedule_id, (schedule.released_version, schedule_version)
+                )
                 try:
                     self.store.commit(
                         session, schedule, actor_id=actor_id, action=DRAFT_ACTION,
@@ -283,20 +294,19 @@ class ProductionPlanner(WorkflowService):
                     )
                 except StaleVersionError:
                     return refused("The plan was changed while this proposal was prepared.")
-            session.add(
-                ProductionScheduleVersion(
-                    schedule_id=schedule.schedule_id,
-                    version=schedule.version,
-                    start_date=window.start_date,
-                    end_date=window.end_date,
-                    daily_capacity_minutes=window.daily_capacity_minutes,
-                    requirements_snapshot={
-                        str(order_id): {str(item): str(q) for item, q in order_needs.items()}
-                        for order_id, order_needs in needs.items()
-                    },
-                    source_order_refs=[c.ref.to_json() for c in candidates],
-                )
+            version = ProductionScheduleVersion(
+                schedule_id=schedule.schedule_id,
+                version=schedule.version,
+                start_date=window.start_date,
+                end_date=window.end_date,
+                daily_capacity_minutes=window.daily_capacity_minutes,
+                requirements_snapshot={
+                    str(order_id): {str(item): str(q) for item, q in order_needs.items()}
+                    for order_id, order_needs in needs.items()
+                },
+                source_order_refs=[c.ref.to_json() for c in candidates],
             )
+            self.store.commit(session, version, actor_id=actor_id, action=DRAFT_ACTION)
             for task in tasks:
                 key = (task.order_id, task.task_kind, task.start_at, task.end_at)
                 record = ProductionTask(
@@ -323,10 +333,19 @@ class ProductionPlanner(WorkflowService):
         self, session: Session, window: PlanWindow, schedule_id: uuid.UUID | None
     ) -> tuple[list[_Candidate], list[ExcludedOrder]]:
         start, end = _bounds(window)
+        # A revision re-plans its own released orders and replaces all of their
+        # commitments; release has made them Scheduled, or work has started.
+        replaced = self._released_here(session, schedule_id)
         orders = session.scalars(
             select(Order)
             .where(
-                Order.status == OrderStatus.CONFIRMED,
+                or_(
+                    Order.status == OrderStatus.CONFIRMED,
+                    and_(
+                        Order.order_id.in_(list(replaced)),
+                        Order.status.in_([OrderStatus.SCHEDULED, OrderStatus.IN_PRODUCTION]),
+                    ),
+                ),
                 Order.required_at >= start,
                 Order.required_at < end,
             )
@@ -347,24 +366,24 @@ class ProductionPlanner(WorkflowService):
             except StockCheckError as exc:
                 excluded.append(ExcludedOrder(ref, f"Its ingredients cannot be worked out: {exc}."))
                 continue
-            shortages = self.inventory.check_stock(session, needs, exclude_orders={order.order_id})
+            shortages = self.inventory.check_stock(
+                session, needs, exclude_orders={order.order_id, *replaced}
+            )
             if shortages:
                 excluded.append(ExcludedOrder(ref, f"Short of {_amounts(session, shortages)}."))
                 continue
-            if self.inventory.check_plan(session, {**accepted, order.order_id: needs}):
+            if self.inventory.check_plan(session, {**accepted, order.order_id: needs}, exclude_orders=replaced):
                 excluded.append(
                     ExcludedOrder(ref, "Not enough stock for it together with orders due earlier.")
                 )
                 continue
             accepted[order.order_id] = needs
-            work = math.ceil(
-                sum((products[item.product_id].labour_minutes * item.quantity for item in order.items), Decimal(0))
-            )
             candidates.append(
                 _Candidate(
                     ref=ref,
-                    demand=OrderDemand(order.required_at, work),
+                    demand=OrderDemand(order.required_at, _work_minutes(order, products)),
                     collection_kind=order.collection_kind,
+                    status=order.status,
                     items=[
                         {"product": products[item.product_id].name, "quantity": item.quantity}
                         for item in order.items
@@ -376,15 +395,17 @@ class ProductionPlanner(WorkflowService):
     @staticmethod
     def _released_elsewhere(session: Session, schedule_id: uuid.UUID | None) -> set[uuid.UUID]:
         """Orders in the released version of any schedule other than ``schedule_id``."""
-        query = select(ProductionScheduleVersion.requirements_snapshot).join(
-            ProductionSchedule,
-            and_(
-                ProductionSchedule.schedule_id == ProductionScheduleVersion.schedule_id,
-                ProductionSchedule.released_version == ProductionScheduleVersion.version,
-            ),
-        )
+        query = _released_snapshots()
         if schedule_id is not None:
             query = query.where(ProductionSchedule.schedule_id != schedule_id)
+        return {uuid.UUID(key) for snapshot in session.scalars(query) for key in snapshot}
+
+    @staticmethod
+    def _released_here(session: Session, schedule_id: uuid.UUID | None) -> set[uuid.UUID]:
+        """Orders in the released version of ``schedule_id``, which its revision replaces."""
+        if schedule_id is None:
+            return set()
+        query = _released_snapshots().where(ProductionSchedule.schedule_id == schedule_id)
         return {uuid.UUID(key) for snapshot in session.scalars(query) for key in snapshot}
 
     @staticmethod
@@ -411,15 +432,26 @@ class ProductionPlanner(WorkflowService):
 
     @staticmethod
     def _logical_ids(
-        session: Session, schedule_id: uuid.UUID, version: int | None
+        session: Session, schedule_id: uuid.UUID, versions: Iterable[int | None]
     ) -> dict[tuple, uuid.UUID]:
-        """Unchanged tasks keep their identity across versions [C1]."""
-        tasks = session.scalars(
-            select(ProductionTask).where(
-                ProductionTask.schedule_id == schedule_id, ProductionTask.schedule_version == version
+        """Unchanged tasks keep their identity across versions [C1].
+
+        The first of ``versions`` with the same task gives its ID. The released
+        version goes first: release carries progress over by these IDs, so a
+        draft that moves a task back to its released time gets the old ID.
+        """
+        ids: dict[tuple, uuid.UUID] = {}
+        for version in versions:
+            if version is None:
+                continue
+            tasks = session.scalars(
+                select(ProductionTask).where(
+                    ProductionTask.schedule_id == schedule_id, ProductionTask.schedule_version == version
+                )
             )
-        )
-        return {(t.order_id, t.task_kind, t.start_at, t.end_at): t.logical_task_id for t in tasks}
+            for t in tasks:
+                ids.setdefault((t.order_id, t.task_kind, t.start_at, t.end_at), t.logical_task_id)
+        return ids
 
     @staticmethod
     def _task_request(
@@ -468,6 +500,31 @@ class ProductionPlanner(WorkflowService):
                 ],
             },
         }
+
+
+def _window(session: Session, start_date: date, end_date: date) -> PlanWindow:
+    settings = session.scalars(select(BakerySettings)).one()
+    return PlanWindow(
+        start_date, end_date, settings.default_daily_capacity_minutes, ZoneInfo(settings.time_zone)
+    )
+
+
+def _work_minutes(order: Order, products: dict[uuid.UUID, Product]) -> int:
+    """The order's labour: each product's ``labour_minutes`` times its quantity, rounded up."""
+    return math.ceil(
+        sum((products[item.product_id].labour_minutes * item.quantity for item in order.items), Decimal(0))
+    )
+
+
+def _released_snapshots():
+    """The requirements snapshot of each schedule's released version."""
+    return select(ProductionScheduleVersion.requirements_snapshot).join(
+        ProductionSchedule,
+        and_(
+            ProductionSchedule.schedule_id == ProductionScheduleVersion.schedule_id,
+            ProductionSchedule.released_version == ProductionScheduleVersion.version,
+        ),
+    )
 
 
 def _bounds(window: PlanWindow) -> tuple[datetime, datetime]:

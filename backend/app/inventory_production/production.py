@@ -162,12 +162,12 @@ class ProductionService:
                             order_id,
                         )
                     )
-            planned = sum((_minutes(t) for t in own), 0)
-            if own and planned < demand.work_minutes:
+            planned = sum((_length(t) for t in own), timedelta())
+            if own and planned < timedelta(minutes=demand.work_minutes):
                 violations.append(
                     Violation(
                         ViolationKind.UNDER_TIME,
-                        f"{label} gets {planned} minutes of work but needs {demand.work_minutes}.",
+                        f"{label} gets {_minutes(planned)} minutes of work but needs {demand.work_minutes}.",
                         order_id,
                     )
                 )
@@ -203,17 +203,19 @@ class ProductionService:
                 )
             if latest is None or task.end_at > latest.end_at:
                 latest = task
-        per_day: dict[date, int] = defaultdict(int)
+        # Exact lengths, not whole minutes: 2 x 120 min 59 s is over 240 minutes.
+        per_day: dict[date, timedelta] = defaultdict(timedelta)
         for task in everything:
             day = _local_day(task, window.zone)
             if day is not None:
-                per_day[day] += _minutes(task)
-        for day, minutes in sorted(per_day.items()):
-            if window.start_date <= day <= window.end_date and minutes > window.daily_capacity_minutes:
+                per_day[day] += _length(task)
+        capacity = timedelta(minutes=window.daily_capacity_minutes)
+        for day, work in sorted(per_day.items()):
+            if window.start_date <= day <= window.end_date and work > capacity:
                 violations.append(
                     Violation(
                         ViolationKind.OVER_CAPACITY,
-                        f"{day:%a %d %b} has {minutes} minutes of work;"
+                        f"{day:%a %d %b} has {_minutes(work, up=True)} minutes of work;"
                         f" the team has {window.daily_capacity_minutes}.",
                     )
                 )
@@ -228,8 +230,14 @@ def _local_day(task: PlannedTask, zone: ZoneInfo) -> date | None:
     return start if last_moment == start else None
 
 
-def _minutes(task: PlannedTask) -> int:
-    return int((task.end_at - task.start_at).total_seconds() // 60)
+def _length(task: PlannedTask) -> timedelta:
+    return task.end_at - task.start_at
+
+
+def _minutes(length: timedelta, *, up: bool = False) -> int:
+    """Whole minutes for a message, rounded the way that agrees with the check."""
+    whole, part = divmod(length, timedelta(minutes=1))
+    return whole + 1 if up and part else whole
 
 
 def _short(order_id: uuid.UUID) -> str:
