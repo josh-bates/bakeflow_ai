@@ -97,7 +97,7 @@ GitHub Actions runs two checks on every pull request and on every push to `main`
 | **Backend** (`.github/workflows/backend.yml`) | Install the pinned dependencies, `ruff check .`, then `pytest` against a PostgreSQL 17 service. Integration tests apply the Alembic migrations. |
 | **Frontend** (`.github/workflows/frontend.yml`) | `pnpm install --frozen-lockfile`, `pnpm test` (Vitest), `pnpm build` (strict TypeScript check + Vite build) |
 
-Both checks need no secrets and never call a live LLM: CI uses the Mock client and fixtures. A pull request can be merged into `main` only once both checks pass and one teammate has approved it.
+Both checks need no secrets and never call a live LLM: CI uses the Mock client and fixtures. By team agreement, a pull request is merged into `main` only once both checks pass and one teammate has approved it. GitHub enforces this once branch protection is enabled (see [docs/bake-27-ci.md](docs/bake-27-ci.md)).
 
 Why CI matters for this prototype: four people are integrating modules in parallel against shared contracts (records, the workflow, approvals). CI runs the business-rule tests on every change, including the deterministic money, stock and version-approval checks. That is how a change that breaks someone else's module gets caught before it reaches `main` or the Canvas submission. It also leaves a reviewable record that each merged change was tested. See [docs/bake-27-ci.md](docs/bake-27-ci.md).
 

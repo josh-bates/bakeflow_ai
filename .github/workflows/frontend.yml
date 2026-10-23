@@ -4,6 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
+# Cancel a superseded run when the same branch or PR is pushed again.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
