@@ -10,7 +10,6 @@ import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-import pytest
 from sqlalchemy import func, select
 
 from app.llm.gateway import MockLLMClient
