@@ -68,6 +68,42 @@ To start the demo data again from scratch: `docker compose exec app python -m ap
 - The app applies Alembic migrations when it starts. The database is reachable only from the app container, and the app port is bound to `127.0.0.1`.
 - `docker compose logs app` shows the app log. `docker compose down` stops everything; add `-v` to also delete the database volume.
 
+### Submission zip and demo day
+
+At the Week 13 demonstration we download the submitted zip from Canvas, extract it into a new folder and start the app from it (architecture §7.2). Rehearsal results are in [docs/bake-29-clean-zip.md](docs/bake-29-clean-zip.md).
+
+**Build the zip** from a commit, not by zipping the working folder, so `.env`, `.venv`, `node_modules` and other local files cannot get in:
+
+```bash
+git archive --format=zip --prefix=bakeflow_ai/ -o bakeflow_ai.zip HEAD
+```
+
+**Before the demo**, on the demo laptop: install Docker Desktop, prepare a private `.env` from `.env.example`, and build the image once from the zip so the dependency layers are cached. Keep the `.env` and the demo passwords out of the repository and the zip.
+
+| Variable | Demo setting |
+| --- | --- |
+| `POSTGRES_PASSWORD` | Your own value, without `@ : / ? # %` |
+| `BAKEFLOW_ENVIRONMENT` | `demo` |
+| `BAKEFLOW_APP_SECRET` | Required in `demo`, at least 32 bytes: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `BAKEFLOW_SEED_OWNER_PASSWORD`, `BAKEFLOW_SEED_CUSTOMER_PASSWORD` | Your own; keep them in private demo notes |
+| `BAKEFLOW_LLM_MODE` | `live` with the three provider settings below, or `mock` |
+
+**On the day**, in the folder extracted from the Canvas download (not the development checkout):
+
+```bash
+# copy the prepared .env into this folder first
+docker compose down -v      # remove the old demo database; see below
+docker compose up --build -d
+docker compose ps           # wait until app and db are "healthy"
+docker compose exec app python -m app.seed
+```
+
+Then open <http://localhost:8000/> and check <http://localhost:8000/api/health/ready>.
+
+`docker compose down -v` is needed because `compose.yaml` fixes the project name to `bakeflow`, so every extracted copy and the development checkout share one database volume. If that volume was last migrated by an unmerged branch, the submitted code stops at `alembic upgrade head` with "Can't locate revision", and the seed refuses a database that already has data. Removing the volume starts from an empty database. It deletes all the data in it, so run it only on the demo laptop. To restart the demo data later, use `docker compose exec app python -m app.seed --reset --yes` instead.
+
+If the LLM provider is unreachable, set `BAKEFLOW_LLM_MODE=mock` in `.env` and run `docker compose up -d --force-recreate app`. The UI then shows the "Mock mode" banner; tell the demonstrator that the responses are simulated.
+
 ### Backend tests
 
 ```bash
@@ -133,6 +169,7 @@ never from a committed file:
 
 | Variable | Purpose |
 | --- | --- |
+| `BAKEFLOW_LLM_MODE` | `mock` (default, simulated responses) or `live` (calls the provider) |
 | `BAKEFLOW_LLM_BASE_URL` | OpenAI-compatible endpoint |
 | `BAKEFLOW_LLM_API_KEY` | provider key |
 | `BAKEFLOW_LLM_MODEL` | model name |
