@@ -54,5 +54,6 @@ The rehearsal containers, volume and image were removed afterwards.
 ## Still to do in BAKE-29
 
 - [x] Fix gaps 2–4: the README's new "Submission zip and demo day" section (archive command, demo `.env` values, `docker compose down -v`, switching to Mock) and `BAKEFLOW_LLM_MODE` in `.env.example`.
-- [ ] Add a CI job that builds the Docker image, so a broken `Dockerfile` fails a PR instead of the demo.
+- [x] Add a CI job that builds the Docker image, so a broken `Dockerfile` fails a PR instead of the demo. `.github/workflows/docker.yml` (job `build`) copies `.env.example` to `.env` with demo settings and throwaway values, builds with `docker compose build app`, starts with `docker compose up -d --wait`, checks `/api/health/ready` and `/`, then runs the seed and `--reset --yes`. Run locally with the same steps, it passed in 41 s. A broken `COPY` path failed the build step. A broken `CMD` built fine but failed the start step, which is why the job starts the stack instead of only building it.
+- [ ] Ask the repository owner to add **Docker / build** to the required checks for `main`.
 - [ ] Rehearse again after #14, then from the actual candidate submission archive before 1 November (§7.2 step 7).

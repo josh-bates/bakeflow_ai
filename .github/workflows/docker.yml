@@ -1,0 +1,46 @@
+name: Docker
+# No path filters: required checks must report on every pull request (BAKE-27).
+on:
+  pull_request:
+  push:
+    branches: [main]
+# Cancel a superseded run when the same branch or PR is pushed again.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  # Build the image and start it the way the demo does (BAKE-29), so a broken
+  # Dockerfile, compose.yaml or startup fails the PR instead of the demo.
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      # Demo settings with throwaway values: nothing here is a real secret.
+      # The LLM variables stay empty, so the app runs on Mock.
+      - name: Prepare .env
+        run: |
+          cp .env.example .env
+          sed -i \
+            -e 's/^BAKEFLOW_ENVIRONMENT=.*/BAKEFLOW_ENVIRONMENT=demo/' \
+            -e "s/^BAKEFLOW_APP_SECRET=.*/BAKEFLOW_APP_SECRET=$(openssl rand -hex 32)/" \
+            -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" \
+            .env
+      - name: Build the image
+        run: docker compose build app
+      # --wait returns once app and db pass their healthchecks; the app applies
+      # the Alembic migrations before it starts serving.
+      - name: Start app and db
+        run: docker compose up -d --wait --wait-timeout 120
+      - name: Check readiness and the built UI
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:8000/api/health/ready
+          curl --fail --silent --show-error --output /dev/null http://127.0.0.1:8000/
+      - name: Seed and reset the demo data
+        run: |
+          docker compose exec -T app python -m app.seed
+          docker compose exec -T app python -m app.seed --reset --yes
+      - name: Show logs
+        if: failure()
+        run: docker compose logs
