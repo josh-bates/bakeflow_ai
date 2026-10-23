@@ -1,10 +1,13 @@
-name: BAKE-10 frontend
+name: Frontend
+# No path filters: required checks must report on every pull request (BAKE-27).
 on:
   pull_request:
-    paths: ['frontend/**', '.github/workflows/frontend.yml']
   push:
     branches: [main]
-    paths: ['frontend/**', '.github/workflows/frontend.yml']
+# Cancel a superseded run when the same branch or PR is pushed again.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
