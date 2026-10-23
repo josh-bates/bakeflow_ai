@@ -4,3 +4,11 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+# BAKE-27: CI lint. Errors only (pyflakes plus syntax/runtime pycodestyle
+# checks), so style churn never blocks a pull request.
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
