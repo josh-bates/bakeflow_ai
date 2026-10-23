@@ -10,4 +10,6 @@ docs
 **/.venv
 **/venv
 **/node_modules
+# The image builds the UI itself; a local build must not leak in.
+frontend/dist
 backend/tests
