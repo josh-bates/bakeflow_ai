@@ -62,10 +62,47 @@ docker compose exec app python -m app.seed    # demo data into the empty databas
 
 To start the demo data again from scratch: `docker compose exec app python -m app.seed --reset --yes`. This deletes all business data, so it is refused unless `BAKEFLOW_ENVIRONMENT` is `development`, `demo` or `test`. The seed creates the logins `owner@bakeflow.test` and `customer@bakeflow.test` with the passwords from `.env`.
 
+- <http://localhost:8000/> shows the UI. The image builds it from `frontend/` with Node 22 and pnpm, so you do not need Node installed to run the app.
 - <http://localhost:8000/api/health/ready> returns `{"status":"ok","database":"ok"}` once the app can reach PostgreSQL.
 - <http://localhost:8000/docs> shows the generated API documentation.
 - The app applies Alembic migrations when it starts. The database is reachable only from the app container, and the app port is bound to `127.0.0.1`.
 - `docker compose logs app` shows the app log. `docker compose down` stops everything; add `-v` to also delete the database volume.
+
+### Submission zip and demo day
+
+At the Week 13 demonstration we download the submitted zip from Canvas, extract it into a new folder and start the app from it (architecture §7.2). Rehearsal results are in [docs/bake-29-clean-zip.md](docs/bake-29-clean-zip.md).
+
+**Build the zip** from a commit, not by zipping the working folder, so `.env`, `.venv`, `node_modules` and other local files cannot get in:
+
+```bash
+git archive --format=zip --prefix=bakeflow_ai/ -o bakeflow_ai.zip HEAD
+```
+
+**Before the demo**, on the demo laptop: install Docker Desktop, prepare a private `.env` from `.env.example`, and build the image once from the zip so the dependency layers are cached. Keep the `.env` and the demo passwords out of the repository and the zip.
+
+| Variable | Demo setting |
+| --- | --- |
+| `POSTGRES_PASSWORD` | Your own value, without `@ : / ? # %` |
+| `BAKEFLOW_ENVIRONMENT` | `demo` |
+| `BAKEFLOW_APP_SECRET` | Required in `demo`, at least 32 bytes: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `BAKEFLOW_SEED_OWNER_PASSWORD`, `BAKEFLOW_SEED_CUSTOMER_PASSWORD` | Your own; keep them in private demo notes |
+| `BAKEFLOW_LLM_MODE` | `live` with the three provider settings below, or `mock` |
+
+**On the day**, in the folder extracted from the Canvas download (not the development checkout):
+
+```bash
+# copy the prepared .env into this folder first
+docker compose down -v      # remove the old demo database; see below
+docker compose up --build -d
+docker compose ps           # wait until app and db are "healthy"
+docker compose exec app python -m app.seed
+```
+
+Then open <http://localhost:8000/> and check <http://localhost:8000/api/health/ready>.
+
+`docker compose down -v` is needed because `compose.yaml` fixes the project name to `bakeflow`, so every extracted copy and the development checkout share one database volume. If that volume was last migrated by an unmerged branch, the submitted code stops at `alembic upgrade head` with "Can't locate revision", and the seed refuses a database that already has data. Removing the volume starts from an empty database. It deletes all the data in it, so run it only on the demo laptop. To restart the demo data later, use `docker compose exec app python -m app.seed --reset --yes` instead.
+
+If the LLM provider is unreachable, set `BAKEFLOW_LLM_MODE=mock` in `.env` and run `docker compose up -d --force-recreate app`. The UI then shows the "Mock mode" banner; tell the demonstrator that the responses are simulated.
 
 ### Backend tests
 
@@ -86,6 +123,22 @@ BAKEFLOW_TEST_DATABASE_URL=postgresql+psycopg://bakeflow_test:bakeflow_test@127.
 
 They rebuild the schema with the migrations, so never point them at a database you need. Dependencies are pinned exactly in `backend/requirements.txt` (runtime) and `backend/requirements-dev.txt` (tests); change pins deliberately in their own PR.
 
+Lint the backend before pushing with `ruff check .` (from `backend/`, after installing `requirements-dev.txt`).
+
+### Continuous integration
+
+GitHub Actions runs three checks on every pull request and on every push to `main`:
+
+| Workflow | Steps |
+| --- | --- |
+| **Backend** (`.github/workflows/backend.yml`) | Install the pinned dependencies, `ruff check .`, then `pytest` against a PostgreSQL 17 service. Integration tests apply the Alembic migrations. |
+| **Frontend** (`.github/workflows/frontend.yml`) | `pnpm install --frozen-lockfile`, `pnpm test` (Vitest), `pnpm build` (strict TypeScript check + Vite build) |
+| **Docker** (`.github/workflows/docker.yml`) | Build the image with `docker compose`, start app and db with demo settings until both are healthy, check `/api/health/ready` and the UI, then seed and reset (BAKE-29) |
+
+The checks need no secrets and never call a live LLM: CI uses the Mock client and fixtures, and the Docker check writes throwaway values into its `.env`. A pull request is merged into `main` only once the checks pass and one teammate has approved it. GitHub enforces this with the `main` ruleset, which requires **Backend / test**, **Frontend / check**, one approval and a branch that is up to date with `main` (see [docs/bake-27-ci.md](docs/bake-27-ci.md)). **Docker / build** is enforced once it is added to that ruleset.
+
+Why CI matters for this prototype: four people are integrating modules in parallel against shared contracts (records, the workflow, approvals). CI runs the business-rule tests on every change, including the deterministic money, stock and version-approval checks. That is how a change that breaks someone else's module gets caught before it reaches `main` or the Canvas submission. It also leaves a reviewable record that each merged change was tested. See [docs/bake-27-ci.md](docs/bake-27-ci.md).
+
 ### Project layout
 
 Each module is a package inside one application, so all four members can work in parallel (architecture §6.1). Put new code in the package that owns it, and import other modules only through `shared/`.
@@ -105,7 +158,7 @@ Each module is a package inside one application, so all four members can work in
 | `backend/app/marketing/` | Marketing: UC-07, UC-08 |
 | `backend/alembic/` | Migrations; the database URL comes from `BAKEFLOW_DATABASE_URL` |
 | `backend/tests/` | pytest suites |
-| `frontend/` | UI: React + TypeScript + Vite browser shell (BAKE-10, not created yet); its build output `frontend/dist` is served by the backend |
+| `frontend/` | UI: React + TypeScript + Vite browser shell (BAKE-10); its build output `frontend/dist` is served by the backend |
 | `Dockerfile`, `compose.yaml` | One app image plus PostgreSQL (architecture §7.1) |
 
 
@@ -117,6 +170,7 @@ never from a committed file:
 
 | Variable | Purpose |
 | --- | --- |
+| `BAKEFLOW_LLM_MODE` | `mock` (default, simulated responses) or `live` (calls the provider) |
 | `BAKEFLOW_LLM_BASE_URL` | OpenAI-compatible endpoint |
 | `BAKEFLOW_LLM_API_KEY` | provider key |
 | `BAKEFLOW_LLM_MODEL` | model name |

@@ -1,5 +1,5 @@
 # Local development and test dependencies (BAKE-6): runtime pins plus pytest
-# and httpx2 (used by FastAPI's TestClient).
+# and httpx2 (used by FastAPI's TestClient), and ruff for linting (BAKE-27).
 -r requirements.txt
 colorama==0.4.6 ; sys_platform == "win32"
 httpcore2==2.13.1
@@ -9,4 +9,5 @@ packaging==26.3
 pluggy==1.7.0
 Pygments==2.21.0
 pytest==9.1.1
+ruff==0.17.1
 truststore==0.10.5

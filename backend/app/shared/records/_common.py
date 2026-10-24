@@ -99,6 +99,8 @@ class RecordMixin:
     __versioning__: Versioning = Versioning.NONE
     # Row-versioned records only: columns that may change on a saved version.
     __mutable_fields__: frozenset[str] = frozenset()
+    # Unversioned records that never change once saved (a schedule version [C1]).
+    __append_only__: bool = False
 
     @property
     def record_id(self) -> uuid.UUID:

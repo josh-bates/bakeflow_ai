@@ -339,10 +339,10 @@ def test_order_cannot_change_while_it_is_checked(store, seeded, inventory, monke
     editor = threading.Thread(target=edit_order)
     original_check_stock = InventoryService.check_stock
 
-    def check_stock_while_someone_edits(self, session, requirements):
+    def check_stock_while_someone_edits(self, session, requirements, **kwargs):
         editor.start()
         seen["edited_during_check"] = edited.wait(timeout=1.0)
-        return original_check_stock(self, session, requirements)
+        return original_check_stock(self, session, requirements, **kwargs)
 
     monkeypatch.setattr(InventoryService, "check_stock", check_stock_while_someone_edits)
     result = inventory.run_stock_check(ref.record_id, expected_order_version=1, actor_id=seeded.owner_id)
