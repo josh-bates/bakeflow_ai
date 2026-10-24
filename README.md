@@ -192,3 +192,12 @@ retry budget belongs to `WorkflowService` (BAKE-8).
 Set `BAKEFLOW_APP_SECRET` in your private `.env` to a randomly generated value of at least 32 bytes (see `.env.example`). Use the same value across restarts and workers so pending summaries remain valid until their 30-minute expiry. Changing it invalidates pending summaries. Only `development` permits an empty setting, with a warning and a temporary random key; other environments refuse to start without it.
 
 The optional `backend/requirements-local-demo.txt` installs native PostgreSQL via `pgserver==0.1.4`. Its wheel availability depends on OS and Python version: it was tested here on macOS with Python 3.12, and installation is not available on the reviewed Windows/Python 3.13 setup. If pip reports “No matching distribution”, use the supported Docker Compose instructions above. This optional launcher is not required by the application, CI or Docker deployment.
+
+### BAKE-14 sign-in and permissions
+
+After migrating and seeding, sign in with `customer@bakeflow.test` or
+`owner@bakeflow.test` using the seed passwords from your private environment.
+Customers can read only their own orders; owner operations require an owner
+session. Sign out revokes the session. See [BAKE-14 setup and API contract](docs/bake-14-auth.md)
+for CSRF headers, shared permission dependencies and the optional local launcher.
+Deployment requires HTTPS; local development may use loopback HTTP.

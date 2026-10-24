@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type Session } from "./api/client";
 import { CustomerPage } from "./customer/CustomerPage";
 import { OwnerPage, ownerPages, type OwnerPageName } from "./owner/OwnerPage";
+import { SignIn } from "./components/SignIn";
 import { Notice } from "./components/Notice";
 
 export function App() {
@@ -45,7 +46,7 @@ export function App() {
     setError("Your session has ended. Please sign in again.");
   }, []);
   const route =
-    path === "/"
+    (path === "/" || path === "/login")
       ? session?.user.role === "Owner"
         ? "/owner/approvals"
         : "/customer"
@@ -86,6 +87,10 @@ export function App() {
               {session.user.displayName}
               <small>{session.user.role}</small>
             </span>
+            <button className="secondary" onClick={async () => {
+              try { await api.logout(session.csrfToken); expire(); }
+              catch (e) { if (e instanceof ApiError && e.status === 401) expire(); else setError((e as Error).message); }
+            }}>Sign out</button>
           </div>
         )}
       </header>
@@ -120,34 +125,16 @@ export function App() {
         </nav>
       )}
       <main id="main-content" tabIndex={-1}>
+        {session && error && <Notice error>{error}</Notice>}
         {loading ? (
           <Notice>Opening your bakery workspace…</Notice>
         ) : !session ? (
-          <section className="card access">
-            <p className="eyebrow">WELCOME TO BAKEFLOW</p>
-            <h1>
-              {signedOut
-                ? "Sign in to your workspace"
-                : "We couldn’t open your workspace"}
-            </h1>
-            <Notice error>{error}</Notice>
-            <p>
-              Your account determines which orders and pages you can access.
-            </p>
-            <div className="actions">
-              {signedOut && (
-                <a className="primary" href="/api/auth/login">
-                  Sign in
-                </a>
-              )}
-              <button
-                className="secondary"
-                onClick={() => setAttempt((value) => value + 1)}
-              >
-                Try again
-              </button>
-            </div>
-          </section>
+          signedOut ? <SignIn onSuccess={() => { location.hash = "/"; setAttempt(value => value + 1); }} /> : (
+            <section className="card access"><h1>We couldn’t open your workspace</h1>
+              <Notice error>{error}</Notice>
+              <button className="secondary" onClick={() => setAttempt(value => value + 1)}>Try again</button>
+            </section>
+          )
         ) : !permitted ? (
           <section className="card access">
             <h1>Page unavailable</h1>
