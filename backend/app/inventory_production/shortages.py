@@ -1,0 +1,260 @@
+"""UC-03 steps 6 and 6a: the AI explains a saved shopping list (BAKE-31).
+
+``ShortageExplainer.explain`` runs when the owner asks; nothing is saved. It
+reads the ``ShoppingList`` that ``InventoryService`` saved (TX-STOCK-CHECK) and
+gives ``InventoryProductionAgent.explain_shortages`` only those quantities,
+with the ingredient names and stock units, in a server-built ``TaskRequest``
+(architecture §5.2). The agent never changes a quantity or stock: the list it
+explains is the one returned, whatever the agent says.
+
+``check_explanation`` decides whether an explanation is usable. Every number
+in it must be one of the list's quantities, in the unit of a line with that
+quantity, never signed (``-``, ``−`` or ``–``) and never written in words
+(review of #19); every short ingredient must be named with its shortfall; and
+no ingredient outside the list may be named. It does not check which
+ingredient each number is said of.
+
+``WorkflowService.run_ai_task`` owns the budget: an unreadable reply or one
+that fails the check is retried at most twice. If none is usable, the owner
+gets the same list with ``UNAVAILABLE_NOTICE`` (UC-03 6a), and the failure is
+in the workflow audit log. A list with no shortage (UC-03 4a) needs no
+explanation, so the agent is not called. A list for an older order version is
+refused before and after the agent runs [R10].
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import uuid
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from decimal import Decimal
+from enum import StrEnum
+
+from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.inventory_production.scheduling import InventoryProductionAgent, ShortageExplanation
+from app.llm.gateway import ILLMClient, LLMCallFailed
+from app.shared import RecordRef, StaleVersionError, ValidatedRecordStore
+from app.shared.records import InventoryItem, Order, ShoppingList
+from app.workflow.order_flow import AIOperationFailed, OrderStage, WorkflowService
+
+TASK_KIND = "explain_shortages"
+PROMPT_VERSION = "explain_shortages/1"
+EVENT_TYPE = "explainShortages"
+UNAVAILABLE_NOTICE = "Explanation temporarily unavailable. The shopping list is unchanged."
+_log = logging.getLogger(__name__)
+
+# A number, with a sign only if it touches the digits, and the word after it.
+_NUMBER = re.compile(
+    r"(?P<sign>[-−–])?(?P<number>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
+    r"(?:\s*(?P<unit>[A-Za-z]+))?"
+)
+# Numbers in words escape the digit check, so they are not allowed at all.
+_NUMBER_WORDS = re.compile(
+    r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+    r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|"
+    r"seventy|eighty|ninety|hundred|thousand|million|dozen|half)\b",
+    re.IGNORECASE,
+)
+# Unit words after a number, by the stock unit they stand for.
+_UNITS = {
+    "g": "g", "gram": "g", "grams": "g",
+    "kg": "kg", "kilogram": "kg", "kilograms": "kg",
+    "ml": "ml", "millilitre": "ml", "millilitres": "ml", "milliliter": "ml", "milliliters": "ml",
+    "l": "l", "litre": "l", "litres": "l", "liter": "l", "liters": "l",
+}
+
+
+@dataclass(frozen=True)
+class ListLine:
+    """One ingredient on a saved list, in its stock unit."""
+
+    item_id: uuid.UUID
+    ingredient: str
+    unit: str
+    required: Decimal
+    # None when the stock covers this ingredient.
+    short_by: Decimal | None = None
+
+
+class ExplanationStatus(StrEnum):
+    # The agent's text passed ``check_explanation``.
+    EXPLAINED = "Explained"
+    # No usable explanation within the budget (UC-03 6a); the list is unchanged.
+    UNAVAILABLE = "Unavailable"
+    # Nothing is short (UC-03 4a); the agent was not called.
+    NO_SHORTAGES = "NoShortages"
+
+
+@dataclass(frozen=True)
+class ExplanationOutcome:
+    status: ExplanationStatus
+    shopping_list_ref: RecordRef
+    order_ref: RecordRef
+    lines: tuple[ListLine, ...]
+    text: str = ""
+    notice: str = ""
+
+
+class ShortageExplainer(WorkflowService):
+    """UC-03 6/6a workflow extension; reuses BAKE-8's single AI retry budget."""
+
+    def __init__(self, store: ValidatedRecordStore, client: ILLMClient):
+        super().__init__()
+        self.store = store
+        self.agent = InventoryProductionAgent(client)
+
+    def explain(self, list_id: uuid.UUID, *, actor_id: uuid.UUID) -> ExplanationOutcome:
+        """Explain shopping list ``list_id`` for the owner; nothing is saved.
+
+        Raises ``RecordNotFound`` for an unknown list, and ``StaleVersionError``
+        if its order changed after the list was saved, before or while the
+        agent ran: run the stock check again for the current version.
+        """
+        with self.store.unit_of_work() as session:
+            shopping_list = self.store.load(session, ShoppingList, list_id)
+            order_id, order_version = shopping_list.order_id, shopping_list.source_order_version
+            order = _current_order(self.store, session, order_id, order_version)
+            stage = OrderStage(order.status)
+            order_ref = self.store.ref(order)
+            lines = _lines(session, shopping_list)
+            listed = {line.ingredient for line in lines}
+            others = [n for n in session.scalars(select(InventoryItem.ingredient_name)) if n not in listed]
+        # Shopping lists never change once saved, so version 1 names the list.
+        list_ref = RecordRef("ShoppingList", list_id, 1)
+        if all(line.short_by is None for line in lines):
+            return ExplanationOutcome(ExplanationStatus.NO_SHORTAGES, list_ref, order_ref, lines)
+
+        request = _task_request(list_ref, order_ref, lines)
+        problems: list[str] = []
+
+        def attempt() -> ShortageExplanation:
+            try:
+                return self.agent.explain_shortages(request)
+            except (LLMCallFailed, ValidationError):
+                problems[:] = ["the assistant gave no readable explanation"]
+                raise
+
+        def usable(explanation: ShortageExplanation) -> bool:
+            problems[:] = check_explanation(explanation.text, lines, others)
+            return not problems
+
+        try:
+            explanation = self.run_ai_task(
+                list_ref, stage, attempt, usable, actor=str(actor_id), event_type=EVENT_TYPE
+            )
+        except AIOperationFailed:
+            _log.warning("No usable explanation for shopping list %s: %s", list_id, "; ".join(problems))
+            return ExplanationOutcome(
+                ExplanationStatus.UNAVAILABLE, list_ref, order_ref, lines, notice=UNAVAILABLE_NOTICE
+            )
+        with self.store.unit_of_work() as session:
+            _current_order(self.store, session, order_id, order_version)
+        return ExplanationOutcome(
+            ExplanationStatus.EXPLAINED, list_ref, order_ref, lines, text=explanation.text
+        )
+
+
+def check_explanation(text: str, lines: Sequence[ListLine], others: Iterable[str]) -> list[str]:
+    """Why ``text`` does not fit the list ``lines``; empty means usable.
+
+    ``others`` are the names of inventory ingredients that are not on the list.
+    """
+    problems: list[str] = []
+    allowed = {(q, line.unit.lower()) for line in lines for q in (line.required, line.short_by) if q is not None}
+    mentioned: set[Decimal] = set()
+    for match in _NUMBER.finditer(text):
+        shown = match.group().strip()
+        if match["sign"]:
+            problems.append(f"{shown!r} is signed; list quantities are never negative")
+            continue
+        number = Decimal(match["number"].replace(",", ""))
+        mentioned.add(number)
+        unit = _UNITS.get((match["unit"] or "").lower())
+        if unit is not None and (number, unit) not in allowed:
+            problems.append(f"{shown!r} is not a quantity on the list in {unit}")
+        elif all(number != q for q, _ in allowed):
+            problems.append(f"{match['number']!r} is not a quantity on the list")
+    for match in _NUMBER_WORDS.finditer(text):
+        problems.append(f"{match.group()!r} writes a number in words")
+
+    listed_spans: list[tuple[int, int]] = []
+    for line in lines:
+        spans = [m.span() for m in _name(line.ingredient).finditer(text)]
+        listed_spans += spans
+        if line.short_by is None:
+            continue
+        if not spans:
+            problems.append(f"the short ingredient {line.ingredient} is not named")
+        if line.short_by not in mentioned:
+            problems.append(f"the shortfall of {line.ingredient} ({_plain(line.short_by)}) is not given")
+    for name in others:
+        # "sugar" inside a listed "icing sugar" is not another ingredient.
+        if any(
+            not any(start <= m.start() and m.end() <= end for start, end in listed_spans)
+            for m in _name(name).finditer(text)
+        ):
+            problems.append(f"{name} is not on the list")
+    return problems
+
+
+def _current_order(store: ValidatedRecordStore, session: Session, order_id: uuid.UUID, version: int) -> Order:
+    order = store.load(session, Order, order_id)
+    if order.version != version:
+        raise StaleVersionError(
+            f"Order {order_id} is at version {order.version}; the list is for version {version}"
+        )
+    return order
+
+
+def _lines(session: Session, shopping_list: ShoppingList) -> tuple[ListLine, ...]:
+    """The list's lines, short ingredients first, each group by name."""
+    requirements = {uuid.UUID(k): Decimal(v) for k, v in shopping_list.requirements.items()}
+    shortages = {uuid.UUID(k): Decimal(v) for k, v in shopping_list.shortages.items()}
+    items = {
+        item.item_id: item
+        for item in session.scalars(select(InventoryItem).where(InventoryItem.item_id.in_(list(requirements))))
+    }
+    lines = [
+        ListLine(item_id, items[item_id].ingredient_name, items[item_id].unit, quantity, shortages.get(item_id))
+        for item_id, quantity in requirements.items()
+    ]
+    return tuple(sorted(lines, key=lambda line: (line.short_by is None, line.ingredient.lower())))
+
+
+def _task_request(list_ref: RecordRef, order_ref: RecordRef, lines: Iterable[ListLine]) -> dict:
+    """The server-built TaskRequest (architecture §5.2); only the saved list's facts."""
+    return {
+        "taskId": str(uuid.uuid4()),
+        "taskKind": TASK_KIND,
+        "promptVersion": PROMPT_VERSION,
+        "subjectRef": list_ref.to_json(),
+        "inputRefs": [order_ref.to_json()],
+        "inputData": {
+            "ingredients": [
+                {
+                    "ingredient": line.ingredient,
+                    "unit": line.unit,
+                    "required": _plain(line.required),
+                    "short_by": None if line.short_by is None else _plain(line.short_by),
+                }
+                for line in lines
+            ],
+        },
+    }
+
+
+def _name(ingredient: str) -> re.Pattern[str]:
+    """An ingredient's name in running text, singular or plural ("egg", "Eggs")."""
+    stem = ingredient[:-1] if ingredient.lower().endswith("s") else ingredient
+    words = r"\s+".join(re.escape(word) for word in stem.split())
+    return re.compile(rf"\b{words}(?:s|es)?\b", re.IGNORECASE)
+
+
+def _plain(quantity: Decimal) -> str:
+    """``1200.000`` as ``1200``, ``0.500`` as ``0.5``."""
+    return f"{quantity.normalize():f}"
