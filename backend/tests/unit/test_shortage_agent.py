@@ -59,7 +59,7 @@ def test_a_number_not_on_the_list_is_rejected():
     problems = check_explanation("Flour is short by 250 g; the order needs 1200 g.", LINES, OTHERS)
 
     assert problems == [
-        "'250 g' is not a quantity on the list in g",
+        "'250' is not a quantity on the list",
         "the shortfall of Flour (200) is not given",
     ]
     assert check_explanation(f"{GOOD} That is 48 cupcakes.", LINES, OTHERS) == [
@@ -67,13 +67,27 @@ def test_a_number_not_on_the_list_is_rejected():
     ]
 
 
-def test_a_quantity_in_another_unit_is_rejected():
-    problems = check_explanation("Flour is short by 200 kg; the order needs 1200 g.", LINES, OTHERS)
+def test_a_decimal_without_its_leading_zero_is_read_as_written():
+    problems = check_explanation(f"{GOOD} Only .200 g is missing.", LINES, OTHERS)
 
-    assert problems == ["'200 kg' is not a quantity on the list in kg"]
+    assert problems == ["'.200' is not a quantity on the list"]
 
 
-@pytest.mark.parametrize("sign", ["-", "−", "–"])
+@pytest.mark.parametrize("unit", ["kg", "tonnes", "bags", ""])
+def test_a_quantity_without_its_own_unit_is_rejected(unit):
+    problems = check_explanation(f"Flour is short by 200 {unit}; the order needs 1200 g.", LINES, OTHERS)
+
+    assert problems == ["'200' is not followed by its unit (g)"]
+
+
+def test_a_count_may_be_followed_by_its_unit_or_the_ingredient():
+    assert check_explanation(f"{GOOD} It needs 12 each, that is 12 eggs.", LINES, OTHERS) == []
+    assert check_explanation(f"{GOOD} It needs 12 g of eggs.", LINES, OTHERS) == [
+        "'12' is not followed by its unit (each)"
+    ]
+
+
+@pytest.mark.parametrize("sign", ["-", "−", "–", "- ", "– "])
 def test_a_signed_quantity_is_rejected(sign):
     problems = check_explanation(f"Flour is short by 200 g; stock is at {sign}200 g.", LINES, OTHERS)
 
@@ -92,6 +106,12 @@ def test_an_ingredient_not_on_the_list_is_rejected():
     assert problems == ["Cocoa powder is not on the list"]
 
 
+def test_a_common_ingredient_the_bakery_does_not_stock_is_rejected():
+    problems = check_explanation(f"{GOOD} Buy strawberries and yeast too.", LINES, OTHERS)
+
+    assert problems == ["strawberry is not on the list", "yeast is not on the list"]
+
+
 def test_a_listed_name_containing_another_ingredient_is_not_flagged():
     icing = ListLine(uuid.UUID(int=4), "Icing sugar", "g", Decimal("500"), Decimal("5"))
 
@@ -99,6 +119,8 @@ def test_a_listed_name_containing_another_ingredient_is_not_flagged():
     assert check_explanation("Icing sugar is short by 5 g; sugar too.", (icing,), ("Sugar",)) == [
         "Sugar is not on the list"
     ]
+    # Without a separate "Sugar" in stock, plain "sugar" is the listed icing sugar.
+    assert check_explanation("Icing sugar is short by 5 g, so buy sugar.", (icing,), ()) == []
 
 
 def test_every_shortage_must_be_named_with_its_amount():

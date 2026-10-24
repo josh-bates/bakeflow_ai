@@ -8,18 +8,22 @@ with the ingredient names and stock units, in a server-built ``TaskRequest``
 explains is the one returned, whatever the agent says.
 
 ``check_explanation`` decides whether an explanation is usable. Every number
-in it must be one of the list's quantities, in the unit of a line with that
-quantity, never signed (``-``, ``−`` or ``–``) and never written in words
-(review of #19); every short ingredient must be named with its shortfall; and
-no ingredient outside the list may be named. It does not check which
-ingredient each number is said of.
+in it must be one of the list's quantities, with the unit of a line with that
+quantity straight after it (or, for a count such as eggs, the ingredient's
+name), never signed (``-``, ``−`` or ``–``, spaced or not) and never written
+in words (review of #19). Every short ingredient must be named with its
+shortfall. No ingredient outside the list may be named: the check knows the
+inventory's ingredients and a short list of common baking ones, so another
+ingredient can still slip through. It does not check which ingredient each
+number is said of.
 
 ``WorkflowService.run_ai_task`` owns the budget: an unreadable reply or one
 that fails the check is retried at most twice. If none is usable, the owner
 gets the same list with ``UNAVAILABLE_NOTICE`` (UC-03 6a), and the failure is
 in the workflow audit log. A list with no shortage (UC-03 4a) needs no
 explanation, so the agent is not called. A list for an older order version is
-refused before and after the agent runs [R10].
+refused before and after the agent runs, whether or not it gave an
+explanation [R10].
 """
 
 from __future__ import annotations
@@ -48,10 +52,9 @@ EVENT_TYPE = "explainShortages"
 UNAVAILABLE_NOTICE = "Explanation temporarily unavailable. The shopping list is unchanged."
 _log = logging.getLogger(__name__)
 
-# A number, with a sign only if it touches the digits, and the word after it.
+# A number, including ".5", with any sign before it, even a spaced one ("- 200").
 _NUMBER = re.compile(
-    r"(?P<sign>[-−–])?(?P<number>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
-    r"(?:\s*(?P<unit>[A-Za-z]+))?"
+    r"(?P<sign>[-−–]\s*)?(?P<number>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)"
 )
 # Numbers in words escape the digit check, so they are not allowed at all.
 _NUMBER_WORDS = re.compile(
@@ -60,13 +63,23 @@ _NUMBER_WORDS = re.compile(
     r"seventy|eighty|ninety|hundred|thousand|million|dozen|half)\b",
     re.IGNORECASE,
 )
-# Unit words after a number, by the stock unit they stand for.
-_UNITS = {
-    "g": "g", "gram": "g", "grams": "g",
-    "kg": "kg", "kilogram": "kg", "kilograms": "kg",
-    "ml": "ml", "millilitre": "ml", "millilitres": "ml", "milliliter": "ml", "milliliters": "ml",
-    "l": "l", "litre": "l", "litres": "l", "liter": "l", "liters": "l",
+# What may follow a quantity in each stock unit; other units are written as stored.
+_UNIT_WORDS = {
+    "g": r"g|grams?",
+    "kg": r"kg|kilograms?",
+    "ml": r"ml|millilit(?:re|er)s?",
+    "l": r"l|lit(?:re|er)s?",
 }
+# Common baking ingredients that this bakery may not stock, so they are not in
+# the inventory; an explanation cannot name them either unless one is a word of
+# a listed name ("sugar" for "Caster sugar"). Any other ingredient is not caught.
+_COMMON_INGREDIENTS = (
+    "almond", "baking powder", "baking soda", "bicarbonate of soda", "butter", "buttermilk",
+    "caramel", "chocolate", "cinnamon", "cocoa", "coconut", "cream", "cream cheese", "egg",
+    "flour", "fondant", "food colouring", "food coloring", "gelatin", "gelatine", "honey", "jam",
+    "lemon", "margarine", "milk", "nut", "oil", "orange", "raspberry", "salt", "sprinkle",
+    "strawberry", "sugar", "syrup", "vanilla", "yeast", "yoghurt", "yogurt",
+)
 
 
 @dataclass(frozen=True)
@@ -149,11 +162,14 @@ class ShortageExplainer(WorkflowService):
             )
         except AIOperationFailed:
             _log.warning("No usable explanation for shopping list %s: %s", list_id, "; ".join(problems))
+            explanation = None
+        # The order may have changed while the agent ran; the list would be stale.
+        with self.store.unit_of_work() as session:
+            _current_order(self.store, session, order_id, order_version)
+        if explanation is None:
             return ExplanationOutcome(
                 ExplanationStatus.UNAVAILABLE, list_ref, order_ref, lines, notice=UNAVAILABLE_NOTICE
             )
-        with self.store.unit_of_work() as session:
-            _current_order(self.store, session, order_id, order_version)
         return ExplanationOutcome(
             ExplanationStatus.EXPLAINED, list_ref, order_ref, lines, text=explanation.text
         )
@@ -165,20 +181,20 @@ def check_explanation(text: str, lines: Sequence[ListLine], others: Iterable[str
     ``others`` are the names of inventory ingredients that are not on the list.
     """
     problems: list[str] = []
-    allowed = {(q, line.unit.lower()) for line in lines for q in (line.required, line.short_by) if q is not None}
     mentioned: set[Decimal] = set()
     for match in _NUMBER.finditer(text):
-        shown = match.group().strip()
+        shown = match.group()
         if match["sign"]:
             problems.append(f"{shown!r} is signed; list quantities are never negative")
             continue
         number = Decimal(match["number"].replace(",", ""))
         mentioned.add(number)
-        unit = _UNITS.get((match["unit"] or "").lower())
-        if unit is not None and (number, unit) not in allowed:
-            problems.append(f"{shown!r} is not a quantity on the list in {unit}")
-        elif all(number != q for q, _ in allowed):
-            problems.append(f"{match['number']!r} is not a quantity on the list")
+        same = [line for line in lines if number in (line.required, line.short_by)]
+        if not same:
+            problems.append(f"{shown!r} is not a quantity on the list")
+        elif not any(_unit(line).match(text, match.end()) for line in same):
+            units = ", ".join(sorted({line.unit for line in same}))
+            problems.append(f"{shown!r} is not followed by its unit ({units})")
     for match in _NUMBER_WORDS.finditer(text):
         problems.append(f"{match.group()!r} writes a number in words")
 
@@ -192,14 +208,24 @@ def check_explanation(text: str, lines: Sequence[ListLine], others: Iterable[str
             problems.append(f"the short ingredient {line.ingredient} is not named")
         if line.short_by not in mentioned:
             problems.append(f"the shortfall of {line.ingredient} ({_plain(line.short_by)}) is not given")
+    # A name inside one already matched is not another ingredient: "sugar" in a
+    # listed "icing sugar", or "cocoa" in an unlisted "cocoa powder".
+    named = list(listed_spans)
     for name in others:
-        # "sugar" inside a listed "icing sugar" is not another ingredient.
-        if any(
-            not any(start <= m.start() and m.end() <= end for start, end in listed_spans)
-            for m in _name(name).finditer(text)
-        ):
+        spans = [m.span() for m in _name(name).finditer(text) if not _inside(m.span(), listed_spans)]
+        if spans:
+            problems.append(f"{name} is not on the list")
+            named += spans
+    for name in _COMMON_INGREDIENTS:
+        if any(_name(name).search(line.ingredient) for line in lines):
+            continue
+        if any(not _inside(m.span(), named) for m in _name(name).finditer(text)):
             problems.append(f"{name} is not on the list")
     return problems
+
+
+def _inside(span: tuple[int, int], spans: Iterable[tuple[int, int]]) -> bool:
+    return any(start <= span[0] and span[1] <= end for start, end in spans)
 
 
 def _current_order(store: ValidatedRecordStore, session: Session, order_id: uuid.UUID, version: int) -> Order:
@@ -249,10 +275,27 @@ def _task_request(list_ref: RecordRef, order_ref: RecordRef, lines: Iterable[Lis
 
 
 def _name(ingredient: str) -> re.Pattern[str]:
-    """An ingredient's name in running text, singular or plural ("egg", "Eggs")."""
-    stem = ingredient[:-1] if ingredient.lower().endswith("s") else ingredient
-    words = r"\s+".join(re.escape(word) for word in stem.split())
-    return re.compile(rf"\b{words}(?:s|es)?\b", re.IGNORECASE)
+    """An ingredient's name in running text."""
+    return re.compile(rf"\b{_name_source(ingredient)}\b", re.IGNORECASE)
+
+
+def _name_source(ingredient: str) -> str:
+    """Singular or plural: "egg" or "Eggs", "strawberry" or "strawberries"."""
+    words = ingredient.split()
+    last = words[-1]
+    if last.lower().endswith("s"):
+        ending = re.escape(last[:-1]) + "(?:s|es)?"
+    elif re.search(r"[^aeiou]y$", last, re.IGNORECASE):
+        ending = re.escape(last[:-1]) + "(?:y|ies)"
+    else:
+        ending = re.escape(last) + "(?:s|es)?"
+    return r"\s+".join([*(re.escape(word) for word in words[:-1]), ending])
+
+
+def _unit(line: ListLine) -> re.Pattern[str]:
+    """The line's unit straight after a quantity; for a count, its name will do ("12 eggs")."""
+    words = _UNIT_WORDS.get(line.unit.lower()) or f"{re.escape(line.unit)}|{_name_source(line.ingredient)}"
+    return re.compile(rf"\s*(?:{words})\b", re.IGNORECASE)
 
 
 def _plain(quantity: Decimal) -> str:

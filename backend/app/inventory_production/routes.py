@@ -23,7 +23,7 @@ from app.shared.store import RecordNotFound, StaleVersionError, StoreError, Vali
 
 @dataclass(frozen=True)
 class _NoProvider:
-    """Live mode without provider settings: every attempt fails, so 6a applies."""
+    """Live mode without usable provider settings: every attempt fails, so 6a applies."""
 
     reason: str
 
@@ -48,7 +48,8 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
         else:
             try:
                 client = LLMGateway.from_environment()
-            except LLMCallFailed as exc:
+            except (LLMCallFailed, ValueError) as exc:
+                # Missing or unusable settings, such as a URL urlsplit cannot read.
                 client = _NoProvider(str(exc))
         return ShortageExplainer(actual_store, client)
 

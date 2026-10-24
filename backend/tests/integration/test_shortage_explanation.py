@@ -22,7 +22,7 @@ from app.inventory_production import (
 )
 from app.inventory_production.fixtures import MockShortageExplainer, explanation_reply
 from app.inventory_production.shortages import UNAVAILABLE_NOTICE
-from app.llm.gateway import MockLLMClient
+from app.llm.gateway import LLMCallFailed, MockLLMClient
 from app.main import create_app
 from app.shared import StaleVersionError
 from app.shared.records import InventoryItem, Order, OrderItem, ShoppingList
@@ -155,6 +155,23 @@ def test_an_order_edited_while_the_agent_ran_is_refused(store, seeded):
         ShortageExplainer(store, EditingClient()).explain(result.shopping_list_id, actor_id=seeded.owner_id)
 
 
+def test_an_order_edited_while_the_agent_failed_is_refused(store, seeded):
+    result = checked(store, seeded, 48)
+    client = MockLLMClient()
+
+    def edit_then_fail(prompt: str) -> str:
+        if not client.calls:
+            edit_order(store, seeded, result.order_ref.record_id)
+        client.calls.append(prompt)
+        raise LLMCallFailed("provider unavailable")
+
+    client.complete = edit_then_fail
+
+    with pytest.raises(StaleVersionError):
+        ShortageExplainer(store, client).explain(result.shopping_list_id, actor_id=seeded.owner_id)
+    assert len(client.calls) == 3
+
+
 @pytest.fixture
 def app_settings(database_url, seeded):
     return dict(_env_file=None, database_url=database_url, environment="test", app_secret="test-secret-" * 4)
@@ -189,10 +206,17 @@ def test_customer_cannot_ask_for_an_explanation(store, seeded, app_settings):
     assert response.status_code == 403
 
 
-def test_endpoint_shows_the_list_with_a_notice_when_the_ai_is_unavailable(store, seeded, app_settings, monkeypatch):
+@pytest.mark.parametrize("base_url", [None, "https://["], ids=["missing", "unreadable"])
+def test_endpoint_shows_the_list_with_a_notice_when_the_ai_is_unavailable(
+    store, seeded, app_settings, monkeypatch, base_url
+):
     result = checked(store, seeded, 48)
     for name in ("BAKEFLOW_LLM_BASE_URL", "BAKEFLOW_LLM_API_KEY", "BAKEFLOW_LLM_MODEL"):
         monkeypatch.delenv(name, raising=False)
+    if base_url:
+        monkeypatch.setenv("BAKEFLOW_LLM_BASE_URL", base_url)
+        monkeypatch.setenv("BAKEFLOW_LLM_API_KEY", "test-key")
+        monkeypatch.setenv("BAKEFLOW_LLM_MODEL", "test-model")
     with store.unit_of_work() as session:
         lists = session.scalar(select(func.count()).select_from(ShoppingList))
 
