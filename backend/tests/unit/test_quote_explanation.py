@@ -136,6 +136,30 @@ def test_unknown_label_and_missing_total_are_rejected(calc):
     assert any("total price is not referenced" in problem for problem in found)
 
 
+# Carl's review of #19: digits alone are not enough
+
+
+def test_number_written_in_words_is_rejected(calc):
+    expl = explanation(narrative="The total price is about forty-eight dollars.")
+    assert any("in words" in problem for problem in problems(expl, calc))
+
+
+def test_subtotal_called_the_total_is_rejected(calc):
+    expl = explanation(narrative="The total price is $38.40.")  # 38.40 is the cost subtotal
+    assert any("the price" in problem for problem in problems(expl, calc))
+
+
+def test_total_called_the_cost_is_rejected(calc):
+    expl = explanation(narrative="It costs $48.00 to make, so there is no profit.")
+    assert any("a cost" in problem for problem in problems(expl, calc))
+
+
+def test_correctly_labelled_costs_and_price_are_accepted(calc):
+    expl = explanation(narrative="The total cost is $38.40, labour costing $30.00, and the "
+                                 "quoted price is $48.00, or $2.00 per cupcake.")
+    assert problems(expl, calc) == []
+
+
 # Retries and the manual-review fallback (4a)
 
 
@@ -169,6 +193,8 @@ def test_failure_after_two_retries_flags_manual_review(calc):
     assert result.explanation_failed
     assert result.requires_manual_review
     assert workflow.audit_log[-1].event_type == f"{EVENT_TYPE}Failed"
+    # The owner can see why the quote went to manual review.
+    assert any("total" in problem for problem in result.problems)
 
 
 def test_malformed_and_timed_out_replies_count_as_attempts(calc):
@@ -183,6 +209,7 @@ def test_malformed_and_timed_out_replies_count_as_attempts(calc):
     result = explainer(client).explain(calc, subject=ORDER, actor="owner", units=UNITS)
     assert client.calls == 3
     assert result.requires_manual_review
+    assert result.problems == ("the explanation could not be produced: provider call failed: timed out",)
 
     client = mock_explainer(calc, UNITS)
     client.replies = ["not json", json.dumps({"narrative": "x"})]

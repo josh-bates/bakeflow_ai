@@ -46,10 +46,30 @@ MONEY_LABELS = (
 )
 PERCENT_LABELS = ("target_margin_percent", "realised_margin_percent")
 COUNT_LABELS = ("labour_hours", "labour_minutes", "units")
+COST_LABELS = ("material_cost", "labour_cost", "packaging_cost", "additional_cost", "cost_subtotal")
 
 # A number in the narrative, with an optional currency before or percent after.
 _NUMBER = re.compile(
     r"(?P<currency>\$|\bAUD\s*)?(?P<number>\d[\d,]*(?:\.\d+)?)(?P<percent>\s*(?:%|per\s?cent\b))?",
+    re.IGNORECASE,
+)
+
+# Numbers written in words escape the digit check, so they are not allowed
+# at all; the prompt already asks for every figure exactly as given (review of #19).
+_NUMBER_WORDS = re.compile(
+    r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+    r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|"
+    r"seventy|eighty|ninety|hundred|thousand|million|dozen|half)\b",
+    re.IGNORECASE,
+)
+
+# A light label check: the first number after one of these words says what
+# that number is. "Total cost" is a cost; the price and the total are the
+# total (or the price per unit); a cost is one of the cost figures.
+_LABELLED_NUMBER = re.compile(
+    r"\b(?P<keyword>total|price[sd]?|pricing|charged?|quoted?|costs?|costing)\b"
+    r"(?P<gap>[^0-9$.%]{0,30}?)"
+    r"(?P<currency>\$|\bAUD\s*)?(?P<number>\d[\d,]*(?:\.\d+)?)",
     re.IGNORECASE,
 )
 
@@ -134,6 +154,25 @@ def check_explanation(
         if number not in allowed:
             problems.append(f"the narrative mentions the {kind} {match.group().strip()!r},"
                             " which is not a calculated figure")
+
+    for match in _NUMBER_WORDS.finditer(explanation.narrative):
+        problems.append(f"the narrative writes a number in words ({match.group()!r});"
+                        " figures must be written exactly as given")
+
+    price = {figures[label] for label in ("total", "price_per_unit") if label in figures}
+    costs = {figures[label] for label in COST_LABELS}
+    for match in _LABELLED_NUMBER.finditer(explanation.narrative):
+        number = _decimal(match["number"].replace(",", "").rstrip("."))
+        if number is None:
+            continue
+        said = f"{match['keyword']}{match['gap']}".lower()
+        if "cost" in said:
+            allowed, what = costs, "a cost"
+        else:
+            allowed, what = price, "the price"
+        if number not in allowed:
+            problems.append(f"the narrative calls {match.group().strip()!r} {what},"
+                            " but that is a different figure")
     return problems
 
 
@@ -172,6 +211,9 @@ class ExplainedQuote:
     calculation: QuoteCalculation
     explanation: FinancialExplanation | None
     requires_manual_review: bool
+    # Why the last unusable attempt was rejected, so the owner can see why
+    # the quote went to manual review. Empty when an explanation was accepted.
+    problems: tuple[str, ...] = ()
 
     @property
     def explanation_failed(self) -> bool:
@@ -195,17 +237,26 @@ class QuoteExplainer:
     ) -> ExplainedQuote:
         figures = allowed_figures(calc, units)
         flags = [flag.value for flag in calc.review_flags]
+        last_problems: list[str] = []
+
+        def attempt() -> FinancialExplanation:
+            try:
+                return self.agent.explain_quote(figures, flags)
+            except Exception as exc:  # recorded here; run_ai_task counts the attempt
+                last_problems[:] = [f"the explanation could not be produced: {exc}"]
+                raise
+
+        def usable(result: FinancialExplanation) -> bool:
+            last_problems[:] = check_explanation(result, figures)
+            return not last_problems
+
         try:
             explanation = self.workflow.run_ai_task(
-                subject,
-                OrderStage.DRAFT,
-                lambda: self.agent.explain_quote(figures, flags),
-                lambda result: not check_explanation(result, figures),
-                actor=actor,
-                event_type=EVENT_TYPE,
+                subject, OrderStage.DRAFT, attempt, usable, actor=actor, event_type=EVENT_TYPE,
             )
         except AIOperationFailed:
-            return ExplainedQuote(calc, None, requires_manual_review=True)
+            return ExplainedQuote(calc, None, requires_manual_review=True,
+                                  problems=tuple(last_problems))
         return ExplainedQuote(calc, explanation, requires_manual_review=calc.requires_manual_review)
 
 

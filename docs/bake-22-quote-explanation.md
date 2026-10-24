@@ -13,6 +13,13 @@ Implements UC-05 step 4 and flow 4a (AR-03). The Pricing and Bookkeeping Agent e
   - `QuoteExplainer.explain` runs the agent through `WorkflowService.run_ai_task` with `check_explanation` as the usability test, giving the initial attempt plus two retries (BAKE-8). If no attempt is consistent, it returns no explanation with `requires_manual_review=True` and records `QuoteExplanationFailed`. A quote that the calculation already flagged (`LOW_PROFIT`, `UNUSUALLY_HIGH`) still needs review even when the explanation is good.
 - **`fixtures.py`**: a valid Mock reply built from the figures, and a variant with the total off by one cent. These are used by the tests and by BAKE-23's Mock mode.
 
+## Checks added from Carl's review of #19
+
+- **Numbers in words are rejected** (zero to ninety, hundred, thousand, million, dozen, half). The prompt already asks for figures exactly as given, so "about ninety dollars" can no longer slip past the digit check.
+- **Light label check:** the first number after "total", "price", "charge" or "quoted" must be the total or the price per unit. The first number after "cost" (including "total cost") must be one of the cost figures. This catches "the total price is $52.80" (the subtotal) and "it costs $75.43 to make" (the total).
+- **Why it failed:** `ExplainedQuote.problems` keeps the reasons the last attempt was rejected, so the owner can see why a quote went to manual review.
+- **Known limitation:** the label check only looks at the first number after those words. Other wording can still misstate a figure, for example "the profit is $38.40" when that is the subtotal. The owner always sees the calculated figures next to the explanation, and must approve every quote.
+
 ## Decisions (from Carl's review of #12)
 
 - The agent is given its derived figures and told to do no arithmetic. This keeps the checker strict without rejecting natural sentences like "$2.00 each" or "1.5 hours of labour".
