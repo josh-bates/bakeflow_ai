@@ -262,10 +262,7 @@ class QuoteService:
                 return Acceptance(quote, self.store.ref(order), replayed=True)
             self._require_open_decision(session, current, order)
             current.customer_decision = CustomerDecision.ACCEPTED
-            self.store.commit(
-                session, current, actor_id=_customer_actor(session, order), action=DECISION_ACTION,
-                expected_version=current.version,
-            )
+            _commit_decision(self.store, session, current, order)
             order_ref = self.orders.confirm(
                 session, order, quote, actor_id=_customer_actor(session, order)
             )
@@ -279,10 +276,7 @@ class QuoteService:
                 return QuoteView.of(current)
             self._require_open_decision(session, current, order)
             current.customer_decision = CustomerDecision.REJECTED
-            self.store.commit(
-                session, current, actor_id=_customer_actor(session, order), action=DECISION_ACTION,
-                expected_version=current.version,
-            )
+            _commit_decision(self.store, session, current, order)
             return QuoteView.of(current)
 
     # Helpers ----------------------------------------------------------------------
@@ -307,11 +301,15 @@ class QuoteService:
         if _current_shopping_list(session, order) is None:
             raise QuoteError("STALE_VERSION", "the order's stock check is out of date")
 
+    # Every step that writes a quote or its decision locks the order first and
+    # only then reads the latest quote version, so a revision cannot commit in
+    # between (review of #21). Every version of a quote has the same order.
+
     def _current_for_owner(self, session: Session, quote: RecordRef) -> tuple[Quote, Order]:
-        current = self._latest(session, quote.record_id)
+        order = self._order(session, self._latest(session, quote.record_id).order_id, lock=True)
+        current = self._latest(session, quote.record_id, fresh=True)
         if current.version != quote.version:
             raise QuoteError("STALE_VERSION", f"quote is at version {current.version}")
-        order = self._order(session, current.order_id, lock=True)
         if current.source_order_version != order.version:
             raise QuoteError("STALE_VERSION", "the order changed after this quote was priced")
         return current, order
@@ -319,8 +317,9 @@ class QuoteService:
     def _for_customer_decision(
         self, session: Session, quote: RecordRef, customer_id: uuid.UUID
     ) -> tuple[Quote, Order]:
-        current = self._latest(session, quote.record_id)
-        order = self._customer_order(session, current.order_id, customer_id, lock=True)
+        order_id = self._latest(session, quote.record_id).order_id
+        order = self._customer_order(session, order_id, customer_id, lock=True)
+        current = self._latest(session, quote.record_id, fresh=True)
         if current.version != quote.version:
             raise QuoteError(
                 "STALE_VERSION", "this quote has been revised; a revised quotation will follow"
@@ -356,11 +355,23 @@ class QuoteService:
             raise QuoteError("NOT_FOUND", "no such order")
         return order
 
-    def _latest(self, session: Session, quote_id: uuid.UUID) -> Quote:
-        try:
-            return self.store.load(session, Quote, quote_id)
-        except RecordNotFound:
-            raise QuoteError("NOT_FOUND", "no such quote") from None
+    def _latest(self, session: Session, quote_id: uuid.UUID, *, fresh: bool = False) -> Quote:
+        """The latest version; ``fresh`` re-reads it from the database after a lock."""
+        if not fresh:
+            try:
+                return self.store.load(session, Quote, quote_id)
+            except RecordNotFound:
+                raise QuoteError("NOT_FOUND", "no such quote") from None
+        quote = session.scalars(
+            select(Quote)
+            .where(Quote.quote_id == quote_id)
+            .order_by(Quote.version.desc())
+            .limit(1)
+            .execution_options(populate_existing=True)
+        ).first()
+        if quote is None:
+            raise QuoteError("NOT_FOUND", "no such quote")
+        return quote
 
     @staticmethod
     def _latest_for_order(session: Session, order_id: uuid.UUID) -> Quote | None:
@@ -463,6 +474,17 @@ def _quote_row(
     if quote_id is not None:
         quote.quote_id = quote_id
     return quote
+
+
+def _commit_decision(store: ValidatedRecordStore, session: Session, quote: Quote, order: Order) -> None:
+    """Save the customer's decision on the latest version, or say it was revised."""
+    try:
+        store.commit(session, quote, actor_id=_customer_actor(session, order),
+                     action=DECISION_ACTION, expected_version=quote.version)
+    except StaleVersionError:
+        raise QuoteError(
+            "STALE_VERSION", "this quote has been revised; a revised quotation will follow"
+        ) from None
 
 
 def _customer_actor(session: Session, order: Order) -> uuid.UUID:

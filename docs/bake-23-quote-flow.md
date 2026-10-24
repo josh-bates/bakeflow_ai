@@ -40,6 +40,11 @@ Implements UC-05 steps 1-3 and 5-9 (AR-03): save a versioned quote draft for the
 
 **Migration chain:** BAKE-14's `bake14_sessions` also follows `bake11_disclosures`. Whichever of #14 and this PR merges **second** must set its `down_revision` to the other's revision, so Alembic keeps a single head.
 
+## Review of #21 (Carl)
+
+- **Locking order.** `approve`, `withhold`, `accept` and `reject` now lock the order **before** reading the latest quote version, then re-read it fresh. `revise` saves under the same order lock, so a revision can't commit in between and the owner can't approve a version that was just superseded. A store-level `StaleVersionError` on a customer's decision becomes the "revised quotation will follow" `QuoteError`. A regression test injects a revision at exactly that moment.
+- **Alembic heads (still to do).** `bake23_quote_explanation` and #14's `bake14_sessions` both follow `bake11_disclosures`. #14 is expected to merge first, so once it does, this migration's `down_revision` becomes `bake14_sessions`. It can't point there before #14 is in `main`.
+
 ## Deviations
 
 - **Order status:** the order is `Quoted` while an approved quote awaits the customer. This matches BAKE-8's merged `ALLOWED_MOVES`, whereas architecture §4.1.1 goes straight from Draft to Confirmed. Agreed in the review of #12.

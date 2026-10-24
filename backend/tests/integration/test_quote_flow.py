@@ -214,6 +214,28 @@ def test_approving_a_superseded_version_is_refused(store, seeded, quotes):
     assert error.value.code == "STALE_VERSION"
 
 
+def test_revision_committed_while_approval_waits_for_the_lock_is_not_approved(
+        store, seeded, quotes, monkeypatch):
+    """Review of #21: approve locks the order before it reads the latest version."""
+    order_id = priced_order(store, seeded)
+    v1 = quotes.draft(order_id, owner_id=seeded.owner_id)
+    original_order = QuoteService._order
+    revised = []
+
+    def revise_just_before_the_lock(self, session, order_id_, *, lock=False):
+        if lock and not revised:
+            revised.append(quotes.revise(v1.ref, owner_id=seeded.owner_id))  # another request
+        return original_order(self, session, order_id_, lock=lock)
+
+    monkeypatch.setattr(QuoteService, "_order", revise_just_before_the_lock)
+    with pytest.raises(QuoteError) as error:
+        quotes.approve(v1.ref, owner_id=seeded.owner_id)
+
+    assert error.value.code == "STALE_VERSION"
+    assert revised[0].ref.version == 2
+    assert load(store, Order, order_id).status == OrderStatus.DRAFT
+
+
 def test_revised_version_is_not_sent_without_new_approval(store, seeded, quotes):
     order_id = priced_order(store, seeded)
     v1 = quotes.draft(order_id, owner_id=seeded.owner_id)
