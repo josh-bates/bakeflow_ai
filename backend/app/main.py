@@ -42,6 +42,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from app.auth.routes import install_auth
     install_auth(app, settings)
 
+    from app.inventory_production.routes import make_router as make_inventory_router
+    app.include_router(make_inventory_router(settings))
+
     from app.sales.routes import make_router
     app.include_router(make_router(settings))
 
