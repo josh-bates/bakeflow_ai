@@ -63,10 +63,16 @@ def test_time_in_another_zone_is_accepted():
         ({"occurred_at": datetime(2026, 10, 22, 9, 0)}, "occurred_at"),
         ({"occurred_at": NOW + timedelta(hours=1)}, "occurred_at"),
         ({"order_id": "not-a-uuid"}, "order_id"),
+        ({"source_type": "OrderPayment"}, "order_id"),
     ],
 )
 def test_invalid_field_is_reported(changes, field):
     assert fields(flour_invoice(**changes)) == {field}
+
+
+def test_nul_character_in_a_reference_has_its_own_message():
+    [issue] = validate_transaction(flour_invoice(source_reference="INV\x001"), now=NOW)
+    assert (issue.field, issue.message) == ("source_reference", "contains a NUL character")
 
 
 def test_all_invalid_fields_are_reported_together():

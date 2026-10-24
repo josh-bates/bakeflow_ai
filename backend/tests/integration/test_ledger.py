@@ -82,11 +82,13 @@ def test_duplicate_source_is_rejected_and_the_ledger_is_unchanged(ledger, store,
     assert audits(store) == 1
 
 
-def test_duplicate_is_detected_despite_surrounding_spaces(ledger, store, seeded):
+def test_duplicate_is_detected_despite_spaces_and_case(ledger, store, seeded):
     ledger.record(seeded.owner_id, invoice("INV-1001"))
     with pytest.raises(DuplicateTransaction):
         ledger.record(seeded.owner_id, invoice("  INV-1001 "))
-    assert len(stored(store)) == 1
+    with pytest.raises(DuplicateTransaction):
+        ledger.record(seeded.owner_id, invoice("inv-1001"))
+    assert [row.source_reference for row in stored(store)] == ["INV-1001"]
 
 
 def test_invalid_amount_is_rejected_and_nothing_is_stored(ledger, store, seeded):

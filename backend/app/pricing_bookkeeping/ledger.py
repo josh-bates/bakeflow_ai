@@ -7,7 +7,8 @@ Payments are recorded, never executed.
 Duplicates are identified by business origin, never by amount or date [R4]:
 
 - ``(source_type, source_reference)``, such as an invoice or receipt number,
-  identifies one real-world transaction. A second entry with the same source
+  identifies one real-world transaction. References are trimmed and stored in
+  upper case, so ``inv-001`` and ``INV-001`` are the same invoice. A second entry with the same source
   is a duplicate (2b): it is rejected and the existing entry is unchanged.
 - An optional ``request_key`` makes an HTTP retry safe. The same key with
   identical content returns the original entry; the same key with different
@@ -150,7 +151,9 @@ def validate_transaction(
         issues.append(
             ValidationIssue("source_reference", "is required, such as an invoice or receipt number")
         )
-    elif len(reference.strip()) > MAX_REFERENCE_LENGTH or "\x00" in reference:
+    elif "\x00" in reference:
+        issues.append(ValidationIssue("source_reference", "contains a NUL character"))
+    elif len(reference.strip()) > MAX_REFERENCE_LENGTH:
         issues.append(
             ValidationIssue("source_reference", f"must be at most {MAX_REFERENCE_LENGTH} characters")
         )
@@ -159,6 +162,9 @@ def validate_transaction(
         issues.append(ValidationIssue("occurred_at", "must be a date and time with a time zone"))
     elif occurred > (now or datetime.now(UTC)) + FUTURE_TOLERANCE:
         issues.append(ValidationIssue("occurred_at", "cannot be in the future"))
+    if entry.source_type == "OrderPayment" and entry.order_id is None:
+        # Every order payment is attributed to its order, for profitability (BAKE-34).
+        issues.append(ValidationIssue("order_id", "is required for an order payment"))
     for name in ("order_id", "product_id", "request_key"):
         value = getattr(entry, name)
         if value is not None and not isinstance(value, uuid.UUID):
@@ -256,12 +262,12 @@ class LedgerService:
 
 
 def _normalised(entry: TransactionInput) -> TransactionInput:
-    """Trim the reference and store the time in UTC, as the database will."""
+    """Trim and upper-case the reference, and store the time in UTC."""
     return TransactionInput(
         kind=entry.kind,
         amount=entry.amount,
         source_type=entry.source_type,
-        source_reference=entry.source_reference.strip(),
+        source_reference=entry.source_reference.strip().upper(),
         occurred_at=entry.occurred_at.astimezone(UTC),
         order_id=entry.order_id,
         product_id=entry.product_id,

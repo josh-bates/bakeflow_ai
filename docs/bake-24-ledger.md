@@ -19,7 +19,8 @@ Implements UC-06 steps 1-3 (AR-03): the owner records an income or expense, inva
   - kind is `Income` or `Expense`;
   - amount is a `Decimal` above 0 with at most 2 decimal places. The API takes it as a string, so there are no floats;
   - `source_type` is one of `Invoice`, `Receipt`, `Voucher` or `OrderPayment`;
-  - `source_reference` is required, at most 200 characters, and trimmed;
+  - `source_reference` is required, at most 200 characters and free of NUL characters. It is trimmed and stored in upper case, so `inv-001` and `INV-001` count as the same invoice;
+  - an `OrderPayment` must name its order, so profitability (BAKE-34) can attribute every order payment;
   - `occurred_at` has a time zone and is not in the future (5 minutes allowed for clock differences);
   - any linked order or product exists.
 
