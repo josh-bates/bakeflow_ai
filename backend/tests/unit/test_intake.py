@@ -284,3 +284,57 @@ def test_demo_missing_client_is_forbidden(environment, monkeypatch):
     monkeypatch.setattr(demo, "get_settings", lambda: Settings(_env_file=None, database_url="sqlite://", app_secret=""))
     with TestClient(demo.create_demo_app(), client=None, base_url="http://localhost") as client:
         assert client.get("/api/session").status_code == 403
+
+
+def test_clarification_keeps_missing_allergy_incomplete(environment):
+    flow, customer, client = service(environment, valid_data() | {"allergen_concerns": None, "allergen_statement": None})
+    result = flow.preview(customer, "24 vanilla cupcakes", ["not sure"])
+    assert result["summary"]["allergen_concerns"] is None
+    assert result["confirmationToken"] is None
+    assert any("allergen concerns" in q for q in result["questions"])
+    assert len(client.calls) == 1
+    with flow.store.unit_of_work() as db:
+        assert db.scalar(select(func.count()).select_from(Order)) == 0
+
+
+def test_clarification_reextracts_context_and_requires_confirmation(environment):
+    flow, customer, client = service(environment)
+    result = flow.preview(customer, "24 vanilla birthday cupcakes", ["collection next month", "no allergy concerns"])
+    assert result["issues"] == []
+    assert result["questions"] == []
+    assert "follow_up_answers" in client.calls[0]
+    with flow.store.unit_of_work() as db:
+        assert db.scalar(select(func.count()).select_from(Order)) == 0
+    assert flow.confirm(customer, result["confirmationToken"])["status"] == "Draft"
+
+
+def test_ambiguous_fields_require_clarification(environment):
+    flow, customer, _ = service(environment, valid_data() | {"unclear_fields": ["whether you want 12 or 24 cupcakes"]})
+    result = flow.preview(customer, "12 or 24 vanilla cupcakes, no allergy concerns")
+    assert result["confirmationToken"] is None
+    assert any("12 or 24" in q for q in result["questions"])
+
+
+def test_unsupported_product_explains_alternatives_without_saving(environment):
+    flow, customer, _ = service(environment, valid_data() | {"items": [{"product": "croissant", "quantity": 24}]})
+    result = flow.preview(customer, "24 croissants, no allergy concerns")
+    assert any("Unsupported product" in issue for issue in result["issues"])
+    assert any("vanilla cupcake" in q and "end this request" in q for q in result["questions"])
+    assert result["confirmationToken"] is None
+    with flow.store.unit_of_work() as db:
+        assert db.scalar(select(func.count()).select_from(Order)) == 0
+
+
+def test_clarification_preserves_actual_allergy_concerns(environment):
+    flow, customer, _ = service(environment, valid_data() | {"allergen_concerns": ["peanuts"], "allergen_statement": "allergic to peanuts"})
+    result = flow.preview(customer, "24 cupcakes, allergic to peanuts", ["birthday theme"])
+    assert result["summary"]["allergen_concerns"] == ["peanuts"]
+    assert result["confirmationToken"] is None
+    assert any("Do not remove a genuine allergy" in q for q in result["questions"])
+
+
+def test_unsupported_customisation_explained_with_exit_option(environment):
+    flow, customer, _ = service(environment, valid_data() | {"items": [{"product": "Vanilla cupcake", "quantity": 24, "customisation": "replace eggs"}]})
+    result = flow.preview(customer, "24 vanilla cupcakes, replace eggs, no allergy concerns")
+    assert result["confirmationToken"] is None
+    assert any("recipe changes" in q and "end here without saving" in q for q in result["questions"])

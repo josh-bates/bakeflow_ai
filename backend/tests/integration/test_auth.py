@@ -156,3 +156,26 @@ def test_signed_in_customer_can_save_draft_with_real_csrf(app):
         assert receipt.status_code == 200
         assert receipt.json()["status"] == "Draft"
         assert client.get("/api/orders/mine").json()["orders"][0]["id"] == receipt.json()["orderId"]
+
+
+def test_authenticated_clarification_flow(app):
+    from app.sales.fixtures import MISSING_ALLERGY_MESSAGE, UNSUPPORTED_MESSAGE
+    with TestClient(app) as client:
+        headers = login(client)
+        def preview(message, answers):
+            return client.post("/api/order-requests", json={"message": message, "clarifications": answers}, headers=headers)
+        first = preview(MISSING_ALLERGY_MESSAGE, []).json()
+        assert first["summary"]["allergen_concerns"] is None
+        assert first["confirmationToken"] is None
+        assert first["questions"]
+        assert preview(MISSING_ALLERGY_MESSAGE, ["not sure"]).json()["confirmationToken"] is None
+        complete = preview(MISSING_ALLERGY_MESSAGE, ["not sure", "no allergy concerns"]).json()
+        assert complete["confirmationToken"]
+        assert client.get("/api/orders/mine").json()["orders"] == []
+        unsupported = preview(UNSUPPORTED_MESSAGE, []).json()
+        assert "Unsupported product" in " ".join(unsupported["issues"])
+        revised = preview(UNSUPPORTED_MESSAGE, ["24 vanilla birthday cupcakes instead"]).json()
+        assert revised["confirmationToken"]
+        saved = client.post("/api/order-requests/confirm", json={"confirmationToken": complete["confirmationToken"]}, headers=headers)
+        assert saved.status_code == 200 and saved.json()["status"] == "Draft"
+        assert preview(MISSING_ALLERGY_MESSAGE, ["no allergy concerns"] * 9).status_code == 422
