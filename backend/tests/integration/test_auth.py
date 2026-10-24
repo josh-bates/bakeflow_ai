@@ -156,3 +156,48 @@ def test_signed_in_customer_can_save_draft_with_real_csrf(app):
         assert receipt.status_code == 200
         assert receipt.json()["status"] == "Draft"
         assert client.get("/api/orders/mine").json()["orders"][0]["id"] == receipt.json()["orderId"]
+
+
+def test_tracking_checks_ownership_before_explanation_and_keeps_status_on_failure(app, store, seeded, monkeypatch):
+    from app.sales import tracking
+    from app.sales.fixtures import DEMO_MESSAGE
+    from app.llm.gateway import MockLLMClient
+    from app.shared.records import AuditEntry
+    from sqlalchemy import func
+    uid, cid = uuid.uuid4(), uuid.uuid4()
+    with store.unit_of_work() as db:
+        for record in [UserAccount(user_id=uid, email="other@bakeflow.test", password_hash=hash_password("other-test-password"), role="Customer"),
+                       Customer(customer_id=cid, user_id=uid, name="Other", contact="test")]:
+            store.commit(db, record, actor_id=seeded.owner_id, action="test.seed")
+    provider = MockLLMClient(default_reply="unusable")
+    monkeypatch.setattr(tracking, "create_client", lambda *_: provider)
+    with TestClient(app) as client:
+        headers = login(client)
+        preview = client.post("/api/order-requests", json={"message": DEMO_MESSAGE}, headers=headers).json()
+        saved = client.post("/api/order-requests/confirm", json={"confirmationToken": preview["confirmationToken"]}, headers=headers).json()
+        order_id = saved["orderId"]
+        path = f"/api/orders/{order_id}/tracking"
+        with store.unit_of_work() as db:
+            before_audits = db.scalar(select(func.count()).select_from(AuditEntry))
+            before_version = db.get(Order, uuid.UUID(order_id)).version
+        login(client, "other")
+        denied = client.get(path)
+        assert denied.status_code == 404
+        assert denied.json() == client.get(f"/api/orders/{uuid.uuid4()}/tracking").json()
+        assert denied.json() == client.get("/api/orders/not-a-uuid/tracking").json()
+        assert not provider.calls
+        login(client, "owner")
+        assert client.get(path).status_code == 403
+        assert not provider.calls
+        login(client)
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.json()["status"] == "Draft"
+        assert response.json()["explanationAvailable"] is False
+        assert response.json()["explanation"] == tracking.UNAVAILABLE
+        assert len(provider.calls) == 3
+        assert order_id not in provider.calls[0]
+        with store.unit_of_work() as db:
+            order = db.get(Order, uuid.UUID(order_id))
+            assert order.status == "Draft" and order.version == before_version
+            assert db.scalar(select(func.count()).select_from(AuditEntry)) == before_audits

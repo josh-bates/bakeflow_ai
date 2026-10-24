@@ -9,6 +9,7 @@ export type Order = {
   status: string;
   requiredAt: string | null;
 };
+export type Tracking = { id: string; status: string; version: number; requiredAt: string; explanation: string; explanationAvailable: boolean };
 export type OrderSummary = {
   items: { product: string; quantity: number | null; flavour: string | null; theme: string | null; customisation: string | null }[];
   required_at: string | null;
@@ -108,6 +109,13 @@ export const api = {
     )
       return invalid();
     return value as Session;
+  },
+  async tracking(orderId: string): Promise<Tracking> {
+    const value = await request(`/orders/${encodeURIComponent(orderId)}/tracking`);
+    if (!record(value) || typeof value.id !== "string" || typeof value.status !== "string" ||
+        !Number.isInteger(value.version) || typeof value.requiredAt !== "string" ||
+        typeof value.explanation !== "string" || typeof value.explanationAvailable !== "boolean") return invalid();
+    return value as Tracking;
   },
   async orders(): Promise<Order[]> {
     const value = await request("/orders/mine");
