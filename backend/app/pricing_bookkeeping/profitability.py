@@ -17,6 +17,10 @@ So one transaction can appear under both its order and its product, and the
 per-order and per-product lists are two views of the same ledger, not parts
 that add up to each other.
 
+Ingredient invoices are usually general, so per-order margins look high on
+their own: show ``general`` next to them, and use ``overall`` for the
+bakery's profit (e.g. in the BAKE-25 business summary).
+
 Money is exact: amounts are stored to the cent, and sums of cents need no
 rounding. The one rounded value is the margin (profit / income), rounded once
 to four decimal places with ``ROUND_HALF_UP``, the same rule as quotations.

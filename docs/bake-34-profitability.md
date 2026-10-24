@@ -14,6 +14,10 @@ This PR is the deterministic part of UC-06 step 4 (AR-03). Profitability is reca
 - **Money is exact.** Stored amounts are in cents, and sums of cents need no rounding. The only rounded value is the margin (profit ÷ income), rounded once to 4 dp with `ROUND_HALF_UP`, the same rule as quotes. With no income, the margin is shown as none instead of being divided by zero.
 - **No AI involvement.** The figures are calculated before, and without, any explanation, so an explanation failure (5a) can never hide them.
 
+## Reading the figures (for BAKE-25 and the owner view)
+
+From Carl's review of #20: ingredient invoices are usually general, not recorded against one order, so **per-order margins will look close to 100%**. Show `general` expenses next to the per-order and per-product lists, so nobody reads per-order profit as the bakery's real profit. The marketing business summary (BAKE-25) should use `overall` for profit.
+
 ## Still to do on BAKE-34
 
 These follow once the PRs they build on are merged, so no PR is stacked:
