@@ -6,7 +6,7 @@ draft plan; the agent only proposes (architecture §5.2). The rules are IP-05's:
 - the plan has at least one task, each with a positive duration;
 - every task starts and ends on one bakery-local day inside the plan's days;
 - tasks are only for the candidate orders, and every candidate order has a
-  bake and a finish task, no finishing before its first bake ends, and at least
+  bake and a finish task, no finishing before its last bake ends, and at least
   its labour minutes of work in total;
 - the single team never works on two tasks at once, including tasks of other
   released plans (``busy``);
@@ -153,12 +153,15 @@ class ProductionService:
                 )
             bakes = [t for t in own if t.task_kind == "bake"]
             if bakes:
-                first_bake_end = min(t.end_at for t in bakes)
-                if any(t.task_kind == "finish" and t.start_at < first_bake_end for t in own):
+                # Finishing completes the order and triggers its stock deduction
+                # (IP-01), so it follows every bake. Tasks carry no batch, so a
+                # finish between two bakes is refused, not read as one batch's.
+                last_bake_end = max(t.end_at for t in bakes)
+                if any(t.task_kind == "finish" and t.start_at < last_bake_end for t in own):
                     violations.append(
                         Violation(
                             ViolationKind.SEQUENCE,
-                            f"{label} is finished before its first bake ends.",
+                            f"{label} is finished before its last bake ends.",
                             order_id,
                         )
                     )

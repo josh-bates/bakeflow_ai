@@ -122,6 +122,26 @@ def test_finishing_before_baking_is_rejected():
     assert kinds(validate(plan)) == [ViolationKind.SEQUENCE]
 
 
+def test_finishing_between_two_bakes_is_rejected():
+    # Two batches: the finish ends the order, so it must follow the second bake too.
+    plan = [
+        task(A, "bake", at(9), 60),
+        task(A, "finish", at(10), 30),
+        task(A, "bake", at(10, 30), 60),
+    ]
+
+    violations = validate(plan)
+
+    assert kinds(violations) == [ViolationKind.SEQUENCE]
+    assert "last bake" in violations[0].message
+
+
+def test_finishing_after_both_bakes_is_accepted():
+    plan = [task(A, "bake", at(8), 30), task(A, "bake", at(8, 30), 30), task(A, "finish", at(9), 30)]
+
+    assert validate(plan) == []
+
+
 def test_too_little_work_time_is_rejected():
     plan = [task(A, "bake", at(6), 30), task(A, "finish", at(6, 30), 30)]
 
