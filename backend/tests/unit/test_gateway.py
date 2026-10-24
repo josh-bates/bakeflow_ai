@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 
@@ -159,3 +160,60 @@ def test_from_environment_names_what_is_missing(monkeypatch):
 def test_api_key_is_not_printed(monkeypatch):
     client = LLMGateway(base_url="https://example.test/v1", api_key="secret", model_name="m")
     assert "secret" not in repr(client)
+
+
+# --- every transport failure surfaces as LLMCallFailed (BAKE-41) -----------
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TimeoutError("provider timed out"),
+        ConnectionResetError("connection reset by peer"),
+        urllib.error.URLError("provider down"),
+        http.client.IncompleteRead(b"half a reply"),
+    ],
+    ids=["timeout", "connection_reset", "url_error", "incomplete_read"],
+)
+def test_transport_failures_surface_as_llm_call_failed(monkeypatch, failure):
+    def fake_urlopen(request, timeout=None):
+        raise failure
+
+    monkeypatch.setattr(gateway.urllib.request, "urlopen", fake_urlopen)
+    client = LLMGateway(base_url="https://example.test/v1", api_key="k", model_name="m")
+
+    with pytest.raises(LLMCallFailed):
+        client.complete("prompt")
+
+
+def test_a_reply_that_is_not_utf8_surfaces_as_llm_call_failed(monkeypatch):
+    monkeypatch.setattr(
+        gateway.urllib.request, "urlopen",
+        lambda request, timeout=None: _FakeResponse(b"\xff\xfe not utf-8"),
+    )
+    client = LLMGateway(base_url="https://example.test/v1", api_key="k", model_name="m")
+
+    with pytest.raises(LLMCallFailed):
+        client.complete("prompt")
+
+
+# --- the API key never travels unencrypted (BAKE-41) -----------------------
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://example.test/v1", "ftp://example.test/v1", "example.test/v1"],
+    ids=["http", "ftp", "no_scheme"],
+)
+def test_a_provider_url_without_https_is_refused(base_url):
+    with pytest.raises(LLMCallFailed):
+        LLMGateway(base_url=base_url, api_key="k", model_name="m")
+
+
+def test_from_environment_refuses_a_provider_url_without_https(monkeypatch):
+    for name, value in PROVIDER_SETTINGS.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("BAKEFLOW_LLM_BASE_URL", "http://example.test/v1")
+
+    with pytest.raises(LLMCallFailed):
+        LLMGateway.from_environment()

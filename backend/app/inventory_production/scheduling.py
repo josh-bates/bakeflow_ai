@@ -66,7 +66,6 @@ from app.shared.records import (
     ProductionTask,
 )
 from app.workflow.order_flow import AIOperationFailed, OrderStage, WorkflowService
-from app.workflow.order_flow import RecordRef as WorkflowRef
 
 TASK_KIND = "propose_schedule"
 PROMPT_VERSION = "propose_schedule/1"
@@ -211,7 +210,9 @@ class ProductionPlanner(WorkflowService):
                 )
             return not problems
 
-        subject = WorkflowRef("ProductionSchedule", str(schedule_id or uuid.uuid4()), schedule_version or 1)
+        subject = RecordRef(
+            "ProductionSchedule", schedule_id or uuid.uuid4(), schedule_version or 1
+        )
         try:
             proposal = self.run_ai_task(
                 subject, OrderStage.CONFIRMED, attempt, usable,
