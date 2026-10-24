@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String, UniqueConstraint, Uuid
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -61,6 +61,9 @@ class Quote(RowVersioned, Base):
     total: Mapped[Decimal] = mapped_column(Money)
     customer_decision: Mapped[str] = mapped_column(String(16), default=CustomerDecision.PENDING)
     requires_manual_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    # BAKE-22/23: the checked explanation of this version's figures; NULL when
+    # no usable explanation was produced (UC-05 4a, so manual review is set).
+    explanation: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(Timestamp, default=utcnow)
 
 
