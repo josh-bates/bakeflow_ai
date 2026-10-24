@@ -11,7 +11,7 @@ from decimal import Decimal
 import pytest
 
 from app.db.base import Base
-import app.auth.models  # Register infrastructure alongside shared records.
+import app.auth.models  # noqa: F401  Register infrastructure alongside shared records.
 from app.seed import INGREDIENTS, PRODUCTS, SETTINGS
 from app.shared import RecordRef, ValidatedRecordStore
 from app.shared.passwords import hash_password, verify_password

@@ -64,7 +64,8 @@ def test_login_failures_csrf_cookie_and_validation(app):
         old = client.cookies[COOKIE_NAME]
         login(client)
         assert old != client.cookies[COOKIE_NAME]
-        client.cookies.clear(); client.cookies.set(COOKIE_NAME, old)
+        client.cookies.clear()
+        client.cookies.set(COOKIE_NAME, old)
         assert client.get("/api/session").status_code == 401
 
 
