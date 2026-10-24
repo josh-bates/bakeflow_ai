@@ -14,8 +14,16 @@ per batch need 600 g. Needs are exact fractions, summed exactly over all items
 **up** once to the 0.001 stock precision, so a list never under-states what to
 buy.
 
-Availability is the stock on hand. Stock committed to other approved orders
-(IP-02) is subtracted by BAKE-19.
+Availability (BAKE-19, IP-02) is the stock on hand less what released plans
+commit to other active orders. A commitment is the order's line in the
+``requirements_snapshot`` of its schedule's effective ``released_version``, so
+there are no separate reservation records; a revision counts only once it is
+released, and then replaces the version before it. Each order counts once,
+however many tasks it has, and stops counting once it is completed (deducted)
+or cancelled. The orders being checked are left out of the commitments, so a
+re-check replaces their earlier need instead of adding to it. Guarded saves
+(plan drafts and releases) recheck a whole plan with ``check_plan`` inside
+``store.constraint_guard()``.
 
 Problems (UC-03 1a-2a) are collected and reported together; when there is any,
 no shopping list is saved, so nothing looks complete that is not.
@@ -36,18 +44,28 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 import math
 from decimal import Decimal
 from enum import StrEnum
 from fractions import Fraction
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.shared import RecordRef, ValidatedRecordStore
-from app.shared.records import InventoryItem, Order, OrderItem, OrderStatus, Recipe, ShoppingList
+from app.shared.records import (
+    InventoryItem,
+    Order,
+    OrderItem,
+    OrderStatus,
+    ProductionSchedule,
+    ProductionScheduleVersion,
+    Recipe,
+    ShoppingList,
+)
 from app.shared.store import StoreError
 
 STOCK_ACTION = "inventory.stock_check"
@@ -130,7 +148,7 @@ class InventoryService:
                     [Problem(ProblemKind.ORDER_CLOSED, f"order is {order.status}")]
                 )
             requirements = self.calculate_needs(session, order)
-            shortages = self.check_stock(session, requirements)
+            shortages = self.check_stock(session, requirements, exclude_orders={order.order_id})
             shopping_list = ShoppingList(
                 order_id=order.order_id,
                 source_order_version=order.version,
@@ -216,21 +234,100 @@ class InventoryService:
         return {item_id: round_up_quantity(total) for item_id, total in totals.items()}
 
     def check_stock(
-        self, session: Session, requirements: dict[uuid.UUID, Decimal]
+        self,
+        session: Session,
+        requirements: dict[uuid.UUID, Decimal],
+        *,
+        exclude_orders: Collection[uuid.UUID] = (),
     ) -> dict[uuid.UUID, Decimal]:
-        """UC-03 steps 3-4: positive shortfalls against stock on hand."""
+        """UC-03 steps 3-4: positive shortfalls against available stock (IP-02).
+
+        ``exclude_orders`` are the orders ``requirements`` is for: their own
+        commitments are replaced by it, not added to it.
+        """
+        available = self.available_stock(session, requirements, exclude_orders=exclude_orders)
+        return {
+            item_id: need - available[item_id]
+            for item_id, need in requirements.items()
+            if need > available[item_id]
+        }
+
+    def check_plan(
+        self, session: Session, needs_by_order: Mapping[uuid.UUID, Mapping[uuid.UUID, Decimal]]
+    ) -> dict[uuid.UUID, Decimal]:
+        """IP-02 for a whole plan: its orders' combined needs, as positive shortfalls.
+
+        Call it inside ``store.constraint_guard()`` in the guarded save, so a
+        concurrent plan cannot be released on the same stock between the check
+        and the save.
+        """
+        combined: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
+        for needs in needs_by_order.values():
+            for item_id, quantity in needs.items():
+                combined[item_id] += quantity
+        return self.check_stock(session, dict(combined), exclude_orders=needs_by_order.keys())
+
+    def available_stock(
+        self,
+        session: Session,
+        item_ids: Iterable[uuid.UUID],
+        *,
+        exclude_orders: Collection[uuid.UUID] = (),
+    ) -> dict[uuid.UUID, Decimal]:
+        """Stock on hand less commitments; negative if stock is over-committed."""
         on_hand = dict(
             session.execute(
                 select(InventoryItem.item_id, InventoryItem.quantity_on_hand).where(
-                    InventoryItem.item_id.in_(requirements)
+                    InventoryItem.item_id.in_(list(item_ids))
                 )
             ).all()
         )
+        committed = self.committed_needs(session, exclude_orders=exclude_orders)
         return {
-            item_id: need - on_hand[item_id]
-            for item_id, need in requirements.items()
-            if need > on_hand[item_id]
+            item_id: quantity - committed.get(item_id, Decimal(0))
+            for item_id, quantity in on_hand.items()
         }
+
+    def committed_needs(
+        self, session: Session, *, exclude_orders: Collection[uuid.UUID] = ()
+    ) -> dict[uuid.UUID, Decimal]:
+        """Stock committed to active orders in released plans, per inventory item."""
+        snapshots = session.scalars(
+            select(ProductionScheduleVersion.requirements_snapshot).join(
+                ProductionSchedule,
+                and_(
+                    ProductionSchedule.schedule_id == ProductionScheduleVersion.schedule_id,
+                    ProductionSchedule.released_version == ProductionScheduleVersion.version,
+                ),
+            )
+        )
+        excluded = set(exclude_orders)
+        by_order: dict[uuid.UUID, dict[uuid.UUID, Decimal]] = {}
+        for snapshot in snapshots:
+            for order_key, needs in snapshot.items():
+                order_id = uuid.UUID(order_key)
+                if order_id in excluded:
+                    continue
+                # Release keeps an order in one plan; if two ever hold it, count
+                # it once at the larger need rather than twice.
+                order_needs = by_order.setdefault(order_id, {})
+                for item_key, quantity in needs.items():
+                    item_id = uuid.UUID(item_key)
+                    order_needs[item_id] = max(order_needs.get(item_id, Decimal(0)), Decimal(quantity))
+        if not by_order:
+            return {}
+        # Completed orders have been deducted (TX-DEDUCT marks the order Completed
+        # in the same transaction); cancelled ones no longer need stock.
+        active = session.scalars(
+            select(Order.order_id).where(
+                Order.order_id.in_(list(by_order)), Order.status.not_in(list(_CLOSED))
+            )
+        )
+        committed: dict[uuid.UUID, Decimal] = defaultdict(Decimal)
+        for order_id in active:
+            for item_id, quantity in by_order[order_id].items():
+                committed[item_id] += quantity
+        return dict(committed)
 
     @staticmethod
     def _recipe_for(
