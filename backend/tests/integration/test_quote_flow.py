@@ -221,9 +221,11 @@ def test_revision_committed_while_approval_waits_for_the_lock_is_not_approved(
     v1 = quotes.draft(order_id, owner_id=seeded.owner_id)
     original_order = QuoteService._order
     revised = []
+    triggered = []
 
     def revise_just_before_the_lock(self, session, order_id_, *, lock=False):
-        if lock and not revised:
+        if lock and not triggered:
+            triggered.append(True)  # revise() locks the order too; trigger only once
             revised.append(quotes.revise(v1.ref, owner_id=seeded.owner_id))  # another request
         return original_order(self, session, order_id_, lock=lock)
 
