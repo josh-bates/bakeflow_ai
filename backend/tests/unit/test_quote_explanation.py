@@ -7,6 +7,7 @@ calculation is never changed by the explanation.
 """
 
 import json
+import uuid
 from dataclasses import replace
 from decimal import Decimal
 
@@ -31,14 +32,15 @@ from app.pricing_bookkeeping.quotation import (
     QuoteLine,
     ReviewThresholds,
 )
-from app.workflow.order_flow import MAX_ATTEMPTS, RecordRef, WorkflowService
+from app.shared.refs import RecordRef
+from app.workflow.order_flow import MAX_ATTEMPTS, WorkflowService
 
 THRESHOLDS = ReviewThresholds(
     min_profit_margin=Decimal("0.15"),
     min_profit_amount=Decimal("5.00"),
     max_quote_total=Decimal("200.00"),
 )
-ORDER = RecordRef("Order", "order-1", 1)
+ORDER = RecordRef("Order", uuid.UUID(int=1), 1)
 
 # Report Fig. 10: 24 vanilla cupcakes priced at 48.00 (see test_quotation.py).
 FIG10 = CostingInputs(

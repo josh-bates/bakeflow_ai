@@ -26,7 +26,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.llm.gateway import ILLMClient, parse_structured_reply
 from app.pricing_bookkeeping.quotation import CostingInputs, QuoteCalculation, quantize_money
-from app.workflow.order_flow import AIOperationFailed, OrderStage, RecordRef, WorkflowService
+from app.shared.refs import RecordRef
+from app.workflow.order_flow import AIOperationFailed, OrderStage, WorkflowService
 
 PROMPT_VERSION = "quote-explanation-v1"
 EVENT_TYPE = "QuoteExplanation"
