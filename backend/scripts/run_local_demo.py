@@ -1,7 +1,7 @@
 """Start a persistent local PostgreSQL demo without Docker (optional dependency).
 
 From backend/: .venv/bin/python scripts/run_local_demo.py
-Data stays in .local/postgres-demo; this launcher never resets it.
+Data stays in .local/auth-demo; this launcher never resets it.
 """
 from pathlib import Path
 import os
@@ -19,7 +19,7 @@ def main():
     from sqlalchemy import select, func
     import uvicorn
 
-    data = BACKEND.parent / ".local" / "postgres-demo"
+    data = BACKEND.parent / ".local" / "auth-demo"
     data.parent.mkdir(parents=True, exist_ok=True)
     server = pgserver.get_server(data)
     try:
@@ -41,8 +41,16 @@ def main():
         with sessions() as db:
             empty = db.scalar(select(func.count()).select_from(UserAccount)) == 0
         if empty:
-            seed(ValidatedRecordStore(sessions), owner_password=secrets.token_urlsafe(24),
-                 customer_password=secrets.token_urlsafe(24))
+            owner_password, customer_password = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
+            credentials = data.parent / "demo-accounts.txt"
+            # Local-only generated credentials; this directory is gitignored.
+            with open(credentials, "w", opener=lambda path, flags: os.open(path, flags, 0o600)) as output:
+                os.chmod(credentials, 0o600)
+                output.write(f"Owner: owner@bakeflow.test\nPassword: {owner_password}\n\n"
+                             f"Customer: customer@bakeflow.test\nPassword: {customer_password}\n")
+            seed(ValidatedRecordStore(sessions), owner_password=owner_password,
+                 customer_password=customer_password)
+        print(f"Local account credentials: {data.parent / 'demo-accounts.txt'}", flush=True)
         print("Local Mock demo: http://127.0.0.1:4176 (PostgreSQL data is preserved)", flush=True)
         uvicorn.run(create_demo_app(), host="127.0.0.1", port=4176)
     finally:

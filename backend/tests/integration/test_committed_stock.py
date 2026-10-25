@@ -53,17 +53,16 @@ def flour(seeded, grams):
 
 def add_plan_version(store, session, seeded, schedule, needs, *, tasks_per_order=1):
     """Save one planned version: its requirements snapshot and its tasks."""
-    session.add(
-        ProductionScheduleVersion(
-            schedule_id=schedule.schedule_id,
-            version=schedule.version,
-            start_date=PLAN_DAY,
-            end_date=PLAN_DAY,
-            daily_capacity_minutes=240,
-            requirements_snapshot={str(ref.record_id): grams for ref, grams in needs.items()},
-            source_order_refs=[ref.to_json() for ref in needs],
-        )
+    version = ProductionScheduleVersion(
+        schedule_id=schedule.schedule_id,
+        version=schedule.version,
+        start_date=PLAN_DAY,
+        end_date=PLAN_DAY,
+        daily_capacity_minutes=240,
+        requirements_snapshot={str(ref.record_id): grams for ref, grams in needs.items()},
+        source_order_refs=[ref.to_json() for ref in needs],
     )
+    store.commit(session, version, actor_id=seeded.owner_id, action="test.version")
     start = DAY_START
     for ref in needs:
         for kind in ("bake", "finish")[:tasks_per_order]:
