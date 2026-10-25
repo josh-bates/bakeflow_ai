@@ -38,12 +38,12 @@ Implements UC-05 steps 1-3 and 5-9 (AR-03): save a versioned quote draft for the
 | BAKE-14 (#14): sign-in | Owner routes: `POST /api/finance/orders/{id}/quotes` and `/api/finance/quotes/{id}/versions/{v}/approve`, `…/withhold` and `…/revise`. Customer routes: `GET /api/orders/{id}/quote` and `POST …/accept` and `…/reject`. |
 | UI | Owner Approvals page (figures, flags, explanation or "manual review", and actions) and the customer quote card with Accept and Reject. |
 
-**Migration chain:** BAKE-14's `bake14_sessions` also follows `bake11_disclosures`. Whichever of #14 and this PR merges **second** must set its `down_revision` to the other's revision, so Alembic keeps a single head.
+**Migration chain:** `bake23_quote_explanation` follows BAKE-14's `bake14_sessions` (re-pointed after #14 merged), so Alembic has one head.
 
 ## Review of #21 (Carl)
 
 - **Locking order.** `approve`, `withhold`, `accept` and `reject` now lock the order **before** reading the latest quote version, then re-read it fresh. `revise` saves under the same order lock, so a revision can't commit in between and the owner can't approve a version that was just superseded. A store-level `StaleVersionError` on a customer's decision becomes the "revised quotation will follow" `QuoteError`. A regression test injects a revision at exactly that moment.
-- **Alembic heads (still to do).** `bake23_quote_explanation` and #14's `bake14_sessions` both follow `bake11_disclosures`. #14 is expected to merge first, so once it does, this migration's `down_revision` becomes `bake14_sessions`. It can't point there before #14 is in `main`.
+- **Alembic heads (done, 25 Oct).** #14 merged first, so `bake23_quote_explanation` now follows `bake14_sessions`, and the chain has a single head again.
 
 ## Deviations
 
