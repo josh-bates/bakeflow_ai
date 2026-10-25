@@ -16,11 +16,13 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, StrictInt, field_validator
 from sqlalchemy import select
 
+from app.sales.allergy_guard import NO_CONCERNS, concern_evidence
 from app.inventory_production import InventoryService
 from app.llm.gateway import ILLMClient, parse_structured_reply
 from app.shared.records import Customer, Order, OrderItem, Product
+from app.shared.refs import RecordRef
 from app.shared.store import ValidatedRecordStore
-from app.workflow.order_flow import WorkflowService, RecordRef, OrderStage
+from app.workflow.order_flow import WorkflowService, OrderStage
 
 
 class IntakeError(Exception):
@@ -164,7 +166,7 @@ class OrderIntake(WorkflowService):
         products = self.catalogue()
         now = datetime.now(UTC)
         summary = self.run_ai_task(
-            RecordRef("OrderIntake", str(uuid.uuid4()), 1), OrderStage.DRAFT,
+            RecordRef("OrderIntake", uuid.uuid4(), 1), OrderStage.DRAFT,
             lambda: self.agent.extract(context, list(products), now), lambda result: True,
             actor=str(customer.user_id), event_type="extractOrder",
         )
@@ -175,14 +177,21 @@ class OrderIntake(WorkflowService):
         absent = not statement or statement.casefold() not in evidence.casefold()
         if not absent and summary.allergen_concerns == []:
             absent = not re.fullmatch(
-                r"(?:no (?:known )?allerg(?:ies|y concerns)|allerg(?:ies|y concerns):? none)"
-                r"(?:,?\s+(?:thanks|thank you))?[.!]?",
+                NO_CONCERNS,
                 statement.strip(), re.IGNORECASE,
             )
         if absent:
             summary = summary.model_copy(update={"allergen_concerns": None, "allergen_statement": None})
+        allergy_history = concern_evidence([message, *answers])
+        if allergy_history and not summary.allergen_concerns:
+            # Never display an AI-generated empty list as a clean disclosure
+            # while the transcript still contains an earlier concern.
+            summary = summary.model_copy(update={"allergen_concerns": None, "allergen_statement": None})
         issues = validate_order(summary, products, now)
-        review = bool(summary.allergen_concerns) or any(i.customisation for i in summary.items)
+        if allergy_history:
+            issues = [issue for issue in issues if issue != "Please state any allergen concerns, or explicitly say you have no allergy concerns."]
+            issues.append("Allergy or dietary-safety information was mentioned in this conversation. A later no-allergy answer cannot clear it; bakery owner review is required before a draft can be saved.")
+        review = bool(allergy_history) or bool(summary.allergen_concerns) or any(i.customisation for i in summary.items)
         if review:
             issues.append("Allergen concerns or recipe changes need bakery owner review. A draft cannot be saved through this flow yet.")
         questions = []
@@ -195,11 +204,13 @@ class OrderIntake(WorkflowService):
                 questions.append(f"How many {item.product} would you like (1–10,000)?")
         if summary.required_at is None or summary.required_at <= now:
             questions.append("What future date and time would you like to collect your order?")
-        if summary.allergen_concerns is None or not summary.allergen_statement:
+        if not allergy_history and (summary.allergen_concerns is None or not summary.allergen_statement):
             questions.append("Do you have any allergen concerns? Please describe them, or explicitly say 'no allergy concerns'.")
         if summary.budget is not None and summary.budget < 0:
             questions.append("What is your budget, or would you like to leave it unspecified?")
         questions.extend(f"Could you clarify {field}?" for field in summary.unclear_fields)
+        if allergy_history:
+            questions.append("Please contact the bakery to resolve the earlier allergy or dietary-safety information. This request remains blocked even if a later answer says there are no concerns.")
         if review:
             questions.append("Allergen concerns and recipe changes require owner review, which this flow cannot arrange yet. You can revise your request or end here without saving. Do not remove a genuine allergy concern to proceed.")
         return {"summary": summary.model_dump(mode="json"), "issues": issues,

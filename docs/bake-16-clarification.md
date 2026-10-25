@@ -58,3 +58,18 @@ order state transitions, owner approvals or shared record writes.
 Tests cover absent allergen disclosure, unresolved ambiguity, unsupported
 products, retained allergy concerns, re-extraction context, no draft before
 confirmation, authenticated multi-turn HTTP requests, answer limits and UI exit.
+
+## Review fix: retain earlier allergy concerns
+
+A deterministic transcript guard now checks every customer turn before issuing
+any confirmation token. Allergy, intolerance, sensitivity and explicit avoidance
+wording remains a reason for owner review even if the model later returns an
+empty allergy list. A later denial or claimed correction cannot clear this guard.
+The UI receives an unresolved disclosure and an owner-review explanation, not
+'no concerns'; it does not prompt the customer to repeat a no-allergy answer.
+Complete standalone no-concerns clauses are allowed when no other concern exists.
+The check is deliberately conservative and English-oriented; it is not a medical
+classifier or a claim to recognise every possible dietary phrase. It complements
+the model's extraction. Regressions reproduce the reviewer's original statement,
+concerns first raised in a follow-up, repeated denials, qualified denials and
+uncomplicated no-concerns requests. No extra LLM calls or new tables are introduced.

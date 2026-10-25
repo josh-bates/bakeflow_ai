@@ -179,3 +179,29 @@ def test_authenticated_clarification_flow(app):
         saved = client.post("/api/order-requests/confirm", json={"confirmationToken": complete["confirmationToken"]}, headers=headers)
         assert saved.status_code == 200 and saved.json()["status"] == "Draft"
         assert preview(MISSING_ALLERGY_MESSAGE, ["no allergy concerns"] * 9).status_code == 422
+
+
+def test_later_no_allergy_answer_cannot_save_over_earlier_concern(app, store, monkeypatch):
+    import json
+    from sqlalchemy import func
+    from app.llm.gateway import MockLLMClient
+    from app.sales import routes
+    # Reproduce the reviewer: provider follows only the later denial.
+    reply = {"items": [{"product": "Vanilla cupcake", "quantity": 24}],
+             "required_at": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
+             "allergen_concerns": [], "allergen_statement": "no allergy concerns"}
+    monkeypatch.setattr(routes, "mock_for", lambda _: MockLLMClient(default_reply=json.dumps(reply)))
+    with TestClient(app) as client:
+        headers = login(client)
+        response = client.post("/api/order-requests", json={
+            "message": "24 vanilla birthday cupcakes, my son is allergic to peanuts",
+            "clarifications": ["no allergy concerns"]}, headers=headers)
+        assert response.status_code == 200
+        assert response.json()["confirmationToken"] is None
+        assert response.json()["summary"]["allergen_concerns"] is None
+        assert any("owner review" in issue for issue in response.json()["issues"])
+        rejected = client.post("/api/order-requests/confirm", json={"confirmationToken": "not-issued"}, headers=headers)
+        assert rejected.status_code == 409
+        assert client.get("/api/orders/mine").json()["orders"] == []
+    with store.unit_of_work() as db:
+        assert db.scalar(select(func.count()).select_from(Order)) == 0
