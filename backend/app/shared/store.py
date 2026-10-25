@@ -24,7 +24,8 @@ Rules the store enforces:
 - A saved version of a quote, campaign or marketing content is immutable.
   Revise it by adding a row with ``expected_version``; only the fields in
   ``__mutable_fields__`` (such as a customer's decision) may change in place,
-  and only on the latest version.
+  and only on the latest version. An ``__append_only__`` record (a production
+  schedule version) cannot change at all once saved.
 
 Writes that change stock or capacity use ``store.constraint_guard()`` instead
 of ``unit_of_work()``, so they lock the shared guard row first [R1].
@@ -213,6 +214,8 @@ class ValidatedRecordStore:
         if versioning is Versioning.NONE:
             if expected_version is not None or revise:
                 raise ValueError(f"{name} records are not versioned")
+            if not is_new and model.__append_only__:
+                raise RecordValidationError(f"{name} {record.record_id} is saved and cannot change")
             return None
 
         # The store alone sets a saved record's version.
