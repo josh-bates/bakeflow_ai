@@ -52,3 +52,8 @@ Sign in as the seeded customer, save a draft through UC-01, then select Track or
 The panel displays Draft and explains that this is not a confirmed sale. Refresh
 checks the saved record again. This branch is based on main and does not depend
 on the unmerged BAKE-16 PR.
+
+Review compatibility: tracking imports `RecordRef` directly from `app.shared.refs`
+and converts the wire-format order ID to `uuid.UUID` before entering the workflow.
+This works with both the current workflow and BAKE-41 (#25). Provider-failure
+fixtures use the gateway's `LLMCallFailed` contract, which #25 retries explicitly.

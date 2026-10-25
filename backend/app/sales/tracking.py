@@ -1,8 +1,10 @@
 """UC-02 read-only Sales Agent explanations grounded in recorded order stages."""
 import json
+import uuid
 
 from app.llm.gateway import ILLMClient, LLMGateway, MockLLMClient, InvalidLLMOutput, parse_structured_reply
-from app.workflow.order_flow import WorkflowService, OrderStage, RecordRef, AIOperationFailed
+from app.workflow.order_flow import WorkflowService, OrderStage, AIOperationFailed
+from app.shared.refs import RecordRef
 
 # These describe stages, not promises about a particular order's price or timing.
 # Restricting the agent to approved explanations prevents invented delivery,
@@ -53,7 +55,7 @@ def create_client(status: str, mode: str) -> ILLMClient:
 def explain_record(status: str, version: int, order_id: str, actor_id: str, mode: str) -> dict:
     try:
         explanation = WorkflowService().run_ai_task(
-            RecordRef("Order", order_id, version), OrderStage(status),
+            RecordRef("Order", uuid.UUID(order_id), version), OrderStage(status),
             lambda: StatusSalesAgent(create_client(status, mode)).explain(status),
             lambda value: isinstance(value, str) and bool(value),
             actor=actor_id, event_type="explainOrderStatus",
