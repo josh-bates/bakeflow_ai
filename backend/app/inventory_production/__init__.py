@@ -11,5 +11,39 @@ from app.inventory_production.inventory import (
     StockCheckError,
     StockCheckResult,
 )
+from app.inventory_production.production import (
+    OrderDemand,
+    PlannedTask,
+    PlanWindow,
+    ProductionService,
+    Violation,
+    ViolationKind,
+)
+from app.inventory_production.scheduling import (
+    ExcludedOrder,
+    InventoryProductionAgent,
+    PlanOutcome,
+    PlanStatus,
+    ProductionPlanner,
+    ScheduleProposal,
+)
 
-__all__ = ["InventoryService", "Problem", "ProblemKind", "StockCheckError", "StockCheckResult"]
+__all__ = [
+    "ExcludedOrder",
+    "InventoryProductionAgent",
+    "InventoryService",
+    "OrderDemand",
+    "PlanOutcome",
+    "PlanStatus",
+    "PlanWindow",
+    "PlannedTask",
+    "Problem",
+    "ProblemKind",
+    "ProductionPlanner",
+    "ProductionService",
+    "ScheduleProposal",
+    "StockCheckError",
+    "StockCheckResult",
+    "Violation",
+    "ViolationKind",
+]

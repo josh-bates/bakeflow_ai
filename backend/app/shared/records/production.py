@@ -71,10 +71,17 @@ class ProductionSchedule(InPlaceVersioned, Base):
     created_at: Mapped[datetime] = mapped_column(Timestamp, default=utcnow)
 
 
-class ProductionScheduleVersion(Base):
-    """The planned content of one schedule version; never edited once saved."""
+class ProductionScheduleVersion(RecordMixin, Base):
+    """The planned content of one schedule version; never edited once saved.
+
+    Saved through the store (audited) and append-only: its snapshot is what a
+    released plan commits, so changing it would change stock silently [C1].
+    """
 
     __tablename__ = "production_schedule_versions"
+    __record_type__ = "ProductionScheduleVersion"
+    __record_id__ = "schedule_id"
+    __append_only__ = True
     __table_args__ = (
         CheckConstraint("start_date <= end_date", name="date_range"),
         CheckConstraint("daily_capacity_minutes > 0", name="capacity_positive"),
