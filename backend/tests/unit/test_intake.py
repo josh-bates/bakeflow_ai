@@ -282,6 +282,5 @@ def test_demo_missing_client_is_forbidden(environment, monkeypatch):
     import app.sales.demo as demo
     store, _ = environment
     monkeypatch.setattr(demo, "get_settings", lambda: Settings(_env_file=None, database_url="sqlite://", app_secret=""))
-    monkeypatch.setattr(demo, "get_sessionmaker", lambda _: store._sessions)
     with TestClient(demo.create_demo_app(), client=None, base_url="http://localhost") as client:
         assert client.get("/api/session").status_code == 403
