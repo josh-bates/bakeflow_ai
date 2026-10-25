@@ -59,6 +59,7 @@ async function request(path: string, init: RequestInit = {}): Promise<unknown> {
         "The bakery service could not complete this request. Please try again.",
     );
   }
+  if (response.status === 204) return undefined;
   try {
     return await response.json();
   } catch {
@@ -80,6 +81,20 @@ function invalid(): never {
 }
 
 export const api = {
+  async login(email: string, password: string): Promise<void> {
+    try {
+      await request("/auth/login", { method: "POST", headers: {
+        "Content-Type": "application/json", "X-Requested-With": "BakeFlow",
+      }, body: JSON.stringify({ email, password }) });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401)
+        throw new ApiError(401, "Email or password is incorrect.");
+      throw error;
+    }
+  },
+  async logout(csrfToken: string): Promise<void> {
+    await request("/auth/logout", { method: "POST", headers: { "X-CSRF-Token": csrfToken } });
+  },
   async session(): Promise<Session> {
     const value = await request("/session");
     if (

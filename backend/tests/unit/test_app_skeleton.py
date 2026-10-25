@@ -99,10 +99,10 @@ def test_spa_falls_back_to_index_for_client_routes(spa_client):
     assert response.text == "<div id=root></div>"
 
 
-def test_spa_keeps_unknown_api_paths_as_json_404(spa_client):
+def test_spa_keeps_protected_api_paths_as_json_when_database_unavailable(spa_client):
     response = spa_client.get("/api/no-such-endpoint")
 
-    assert response.status_code == 404
+    assert response.status_code == 503
     assert response.headers["content-type"] == "application/json"
 
 

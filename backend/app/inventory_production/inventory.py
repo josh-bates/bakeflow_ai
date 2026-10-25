@@ -253,10 +253,16 @@ class InventoryService:
         }
 
     def check_plan(
-        self, session: Session, needs_by_order: Mapping[uuid.UUID, Mapping[uuid.UUID, Decimal]]
+        self,
+        session: Session,
+        needs_by_order: Mapping[uuid.UUID, Mapping[uuid.UUID, Decimal]],
+        *,
+        exclude_orders: Collection[uuid.UUID] = (),
     ) -> dict[uuid.UUID, Decimal]:
         """IP-02 for a whole plan: its orders' combined needs, as positive shortfalls.
 
+        ``exclude_orders`` are further orders whose commitments the plan
+        replaces, such as those of the released version a revision replaces.
         Call it inside ``store.constraint_guard()`` in the guarded save, so a
         concurrent plan cannot be released on the same stock between the check
         and the save.
@@ -265,7 +271,9 @@ class InventoryService:
         for needs in needs_by_order.values():
             for item_id, quantity in needs.items():
                 combined[item_id] += quantity
-        return self.check_stock(session, dict(combined), exclude_orders=needs_by_order.keys())
+        return self.check_stock(
+            session, dict(combined), exclude_orders={*needs_by_order, *exclude_orders}
+        )
 
     def available_stock(
         self,
