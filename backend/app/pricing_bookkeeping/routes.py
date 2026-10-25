@@ -2,21 +2,22 @@
 
 ``/api/finance`` is an owner-only route family: BAKE-14's middleware checks the
 session, the owner role and the CSRF token for every request under it. Each
-handler also declares the owner dependency, as BAKE-14 asks of owner handlers.
+handler also declares ``Depends(require_owner)``, as BAKE-14 asks of owner
+handlers, and records the signed-in owner as the transaction's actor.
 """
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.auth.access import Identity, require_owner
 from app.config import Settings
 from app.db.session import get_sessionmaker
 from app.pricing_bookkeeping.ledger import (
@@ -29,17 +30,6 @@ from app.pricing_bookkeeping.ledger import (
 )
 from app.pricing_bookkeeping.quotation import ValidationIssue
 from app.shared.store import StoreError, ValidatedRecordStore
-
-
-@dataclass(frozen=True)
-class OwnerIdentity:
-    user_id: uuid.UUID
-
-
-def current_owner(request: Request) -> OwnerIdentity:
-    # Fails closed until BAKE-14 (#14) is merged; then this becomes
-    # app.auth.access.require_owner. No identity is accepted from the request.
-    raise HTTPException(401, "Please sign in.")
 
 
 class TransactionBody(BaseModel):
@@ -84,7 +74,7 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
         return LedgerService(actual_store)
 
     @router.post("/api/finance/transactions")
-    def record(body: TransactionBody, owner: OwnerIdentity = Depends(current_owner)):
+    def record(body: TransactionBody, owner: Identity = Depends(require_owner)):
         try:
             amount = Decimal(body.amount)
         except InvalidOperation:
@@ -125,7 +115,7 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
         return JSONResponse(status_code=200 if saved.replayed else 201, content=entry_json(saved))
 
     @router.get("/api/finance/transactions")
-    def transactions(owner: OwnerIdentity = Depends(current_owner)):
+    def transactions(owner: Identity = Depends(require_owner)):
         try:
             return {"transactions": [entry_json(entry) for entry in ledger().transactions()]}
         except (StoreError, SQLAlchemyError):

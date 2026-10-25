@@ -95,3 +95,18 @@ def test_ledger_routes_refuse_requests_without_an_owner():
         "sourceReference": "INV-1001", "occurredAt": "2026-10-22T09:00:00+11:00",
     })
     assert response.status_code == 401
+
+
+def test_ledger_routes_refuse_a_signed_in_customer():
+    from app.auth.access import Identity
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def signed_in_customer(request, call_next):
+        # Stands in for BAKE-14's session middleware.
+        request.state.identity = Identity(uuid.uuid4(), "Customer", "Demo Customer", uuid.uuid4())
+        return await call_next(request)
+
+    app.include_router(make_router(Settings(_env_file=None)))
+    assert TestClient(app).get("/api/finance/transactions").status_code == 403

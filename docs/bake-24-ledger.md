@@ -33,7 +33,7 @@ Implements UC-06 steps 1-3 (AR-03): the owner records an income or expense, inva
 
 ## Dependencies and deviations
 
-- **Owner sign-in (BAKE-14).** `/api/finance` is one of BAKE-14's owner-only route families, where its middleware checks the session, the owner role and CSRF. Until #14 is merged, `routes.current_owner` rejects every request with 401, so the routes cannot be reached without sign-in. After #14 merges, `current_owner` becomes `app.auth.access.require_owner`, a one-line change.
+- **Owner sign-in (BAKE-14, merged).** `/api/finance` is one of BAKE-14's owner-only route families, where its middleware checks the session, the owner role and CSRF. Each handler also declares `Depends(require_owner)` from `app.auth.access`, and the signed-in owner's `user_id` is recorded as the transaction's actor. A customer gets 403, and a request with no session gets 401.
 - **Route path.** The plan said `/api/owner/transactions`. This uses `/api/finance/transactions` to match BAKE-14's route families. Both are owner-only.
 - **Source types.** The list of source types is a Stage 2 refinement. The Stage 1 report does not list them, and a fixed list stops "invoice" and "Invoice" counting as different sources.
 - No UI yet. The owner dashboard page can follow with BAKE-34 (profitability), which reads this ledger.

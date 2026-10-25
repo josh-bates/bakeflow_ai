@@ -25,7 +25,8 @@ from app.pricing_bookkeeping.ledger import (
     TransactionInput,
     TransactionRejected,
 )
-from app.pricing_bookkeeping.routes import OwnerIdentity, current_owner, make_router
+from app.auth.access import Identity, require_owner
+from app.pricing_bookkeeping.routes import make_router
 from app.shared.records import AuditEntry, Transaction
 
 OCCURRED = datetime(2026, 10, 22, 9, 0, tzinfo=UTC)
@@ -173,7 +174,7 @@ def test_transactions_are_listed_newest_first(ledger, seeded):
 def api(store, seeded) -> TestClient:
     app = FastAPI()
     app.include_router(make_router(Settings(_env_file=None), store=store))
-    app.dependency_overrides[current_owner] = lambda: OwnerIdentity(seeded.owner_id)
+    app.dependency_overrides[require_owner] = lambda: Identity(seeded.owner_id, "Owner", "Owner", None)
     return TestClient(app)
 
 
