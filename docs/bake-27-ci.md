@@ -36,7 +36,6 @@ Until protection is on, the team applies the same rule by agreement: checks pass
 
 ## Verification and remaining gates
 
-- [x] `ruff check .` passes locally on this branch (ruff 0.17.1).
-- [x] The Backend and Frontend checks run on this PR. See the PR's checks tab.
-- [ ] Owner enables GitHub Pro (Student Developer Pack) and protects `main` as above.
-- [ ] Manual test from the story: open a throwaway PR with a deliberately failing test and confirm the merge button is blocked. Save the screenshot in `docs/evidence/bake-27/`, then close the PR without merging.
+- [x] `ruff check .` passes locally (ruff 0.17.1). The Backend and Frontend checks ran and passed on #13, which Carl reviewed and approved before it was merged.
+- [x] `main` is protected (23 October 2026) by the active ruleset "Protect main branch". It requires the `test` and `check` status checks with the branch up to date, and one approving review. It blocks force-pushes and deletion, and nobody can bypass it.
+- [x] Manual test from the story: [#17](https://github.com/josh-bates/bakeflow_ai/pull/17) added a deliberately failing test. The Backend `test` check failed (1 failed, 240 passed), and GitHub reported the PR as blocked. It was closed without merging, and the closed PR is the evidence.
