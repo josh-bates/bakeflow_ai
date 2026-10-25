@@ -13,7 +13,7 @@ NO_CONCERNS = (
 )
 # Only remove a complete, standalone clause. 'Not no allergy concerns' and
 # 'no allergy concerns except peanuts' must retain their risk wording.
-_CLEAR_CLAUSE = re.compile(r"(?:^|(?<=[,;\n]))\s*" + NO_CONCERNS + r"\s*(?=$|[,;\n])", re.IGNORECASE)
+_CLEAR_CLAUSE = re.compile(r"(?:^|(?<=[,;\n.!?]))\s*" + NO_CONCERNS + r"\s*(?=$|[,;\n.!?])", re.IGNORECASE)
 _CONCERN = re.compile(
     r"\ballerg\w*|\bintoleran\w*|\bsensitiv\w*|\banaphyla\w*|\bcoeliac\w*|\bceliac\w*"
     r"|\b(?:avoid|cannot eat|can't eat|reacts? to|reaction to)\b"
