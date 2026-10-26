@@ -1,4 +1,4 @@
-"""UC-06 ledger HTTP boundary (BAKE-24). Owner only.
+"""UC-06 ledger and profitability HTTP boundary (BAKE-24, BAKE-34). Owner only.
 
 ``/api/finance`` is an owner-only route family: BAKE-14's middleware checks the
 session, the owner role and the CSRF token for every request under it. Each
@@ -28,6 +28,7 @@ from app.pricing_bookkeeping.ledger import (
     TransactionInput,
     TransactionRejected,
 )
+from app.pricing_bookkeeping.profitability import ProfitabilityService, ProfitLine
 from app.pricing_bookkeeping.quotation import ValidationIssue
 from app.shared.store import StoreError, ValidatedRecordStore
 
@@ -62,6 +63,17 @@ def issues_json(issues: tuple[ValidationIssue, ...]) -> list[dict]:
     return [{"field": issue.field, "message": issue.message} for issue in issues]
 
 
+def line_json(line: ProfitLine) -> dict:
+    """Money as decimal strings, never JSON numbers; no margin without income."""
+    return {
+        "income": str(line.income),
+        "expenses": str(line.expenses),
+        "profit": str(line.profit),
+        "margin": str(line.margin) if line.margin is not None else None,
+        "transactions": line.transactions,
+    }
+
+
 def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None) -> APIRouter:
     router = APIRouter()
 
@@ -72,6 +84,9 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
                 raise HTTPException(503, "Database not configured.")
             actual_store = ValidatedRecordStore(get_sessionmaker(settings.database_url))
         return LedgerService(actual_store)
+
+    def profitability_service() -> ProfitabilityService:
+        return ProfitabilityService(ledger().store)
 
     @router.post("/api/finance/transactions")
     def record(body: TransactionBody, owner: Identity = Depends(require_owner)):
@@ -120,5 +135,39 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
             return {"transactions": [entry_json(entry) for entry in ledger().transactions()]}
         except (StoreError, SQLAlchemyError):
             raise HTTPException(503, "The ledger could not be loaded; please retry.") from None
+
+    @router.get("/api/finance/profitability")
+    def profitability(
+        start: datetime | None = None,
+        end: datetime | None = None,
+        owner: Identity = Depends(require_owner),
+    ):
+        """UC-06 step 4: profit overall, per order and per product (BAKE-34).
+
+        ``start`` / ``end`` are optional ISO times with a time zone; the period
+        includes its start and excludes its end.
+        """
+        for name, bound in (("start", start), ("end", end)):
+            if bound is not None and bound.utcoffset() is None:
+                raise HTTPException(422, f"{name} needs a time zone, e.g. 2026-10-01T00:00:00+10:00")
+        if start is not None and end is not None and end <= start:
+            raise HTTPException(422, "end must be after start")
+        try:
+            summary = profitability_service().summary(period_start=start, period_end=end)
+        except (StoreError, SQLAlchemyError):
+            raise HTTPException(503, "Profitability could not be loaded; please retry.") from None
+        return {
+            "overall": line_json(summary.overall),
+            # Shown next to the per-order list: ingredient invoices are usually
+            # general, so per-order margins alone overstate profit (review of #20).
+            "general": line_json(summary.general),
+            "byOrder": [{"orderId": str(o.order_id), **line_json(o.line)} for o in summary.by_order],
+            "byProduct": [
+                {"productId": str(p.product_id), "name": p.name, **line_json(p.line)}
+                for p in summary.by_product
+            ],
+            "periodStart": start.isoformat() if start else None,
+            "periodEnd": end.isoformat() if end else None,
+        }
 
     return router
