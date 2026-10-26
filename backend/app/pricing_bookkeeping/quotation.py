@@ -164,11 +164,11 @@ class FinanceService:
                 issues.append(ValidationIssue(f"{prefix}.quantity", "must be a whole number"))
             elif line.quantity <= 0:
                 issues.append(ValidationIssue(f"{prefix}.quantity", "must be positive"))
-            _check_decimal(
+            check_decimal(
                 issues, f"{prefix}.labour_minutes_per_unit",
                 line.labour_minutes_per_unit, QUANTITY_PLACES, allow_zero=True,
             )
-            _check_decimal(
+            check_decimal(
                 issues, f"{prefix}.packaging_cost_per_unit",
                 line.packaging_cost_per_unit, MONEY_PLACES, allow_zero=True,
             )
@@ -186,18 +186,18 @@ class FinanceService:
                     f"{prefix}.inventory_item_id", "ingredient listed more than once",
                 ))
             seen_items.add(need.inventory_item_id)
-            _check_decimal(
+            check_decimal(
                 issues, f"{prefix}.quantity", need.quantity, QUANTITY_PLACES, allow_zero=False,
             )
-            _check_decimal(
+            check_decimal(
                 issues, f"{prefix}.unit_cost", need.unit_cost, UNIT_COST_PLACES, allow_zero=True,
             )
 
-        _check_decimal(
+        check_decimal(
             issues, "labour_rate_per_hour", inputs.labour_rate_per_hour,
             MONEY_PLACES, allow_zero=False,
         )
-        if _check_decimal(
+        if check_decimal(
             issues, "target_margin", inputs.target_margin,
             MARGIN_DECIMAL_PLACES, allow_zero=True,
         ) and inputs.target_margin >= 1:
@@ -207,7 +207,7 @@ class FinanceService:
             prefix = f"additional_costs[{i}]"
             if not isinstance(extra.description, str) or not extra.description.strip():
                 issues.append(ValidationIssue(f"{prefix}.description", "is required"))
-            _check_decimal(
+            check_decimal(
                 issues, f"{prefix}.amount", extra.amount, MONEY_PLACES, allow_zero=True,
             )
 
@@ -284,7 +284,7 @@ def _check_identifier(issues: list[ValidationIssue], field: str, value: object) 
         issues.append(ValidationIssue(field, "is required"))
 
 
-def _check_decimal(
+def check_decimal(
     issues: list[ValidationIssue],
     field: str,
     value: object,
@@ -311,16 +311,16 @@ def _check_decimal(
 
 def _validate_thresholds(thresholds: ReviewThresholds) -> tuple[ValidationIssue, ...]:
     issues: list[ValidationIssue] = []
-    if _check_decimal(
+    if check_decimal(
         issues, "thresholds.min_profit_margin", thresholds.min_profit_margin,
         MARGIN_DECIMAL_PLACES, allow_zero=True,
     ) and thresholds.min_profit_margin >= 1:
         issues.append(ValidationIssue("thresholds.min_profit_margin", "must be less than 1"))
-    _check_decimal(
+    check_decimal(
         issues, "thresholds.min_profit_amount", thresholds.min_profit_amount,
         MONEY_PLACES, allow_zero=True,
     )
-    _check_decimal(
+    check_decimal(
         issues, "thresholds.max_quote_total", thresholds.max_quote_total,
         MONEY_PLACES, allow_zero=False,
     )

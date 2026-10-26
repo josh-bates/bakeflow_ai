@@ -18,6 +18,22 @@ export type OrderSummary = {
 };
 export type Submission = { summary: OrderSummary; issues: string[]; confirmationToken: string | null };
 export type DraftReceipt = { orderId: string; status: "Draft" };
+/** Money is a decimal string from the server, never a float (BAKE-34). */
+export type ProfitLine = {
+  income: string;
+  expenses: string;
+  profit: string;
+  margin: string | null;
+  transactions: number;
+};
+export type Profitability = {
+  overall: ProfitLine;
+  general: ProfitLine;
+  byOrder: (ProfitLine & { orderId: string })[];
+  byProduct: (ProfitLine & { productId: string; name: string })[];
+  periodStart: string | null;
+  periodEnd: string | null;
+};
 
 export class ApiError extends Error {
   constructor(
@@ -59,6 +75,7 @@ async function request(path: string, init: RequestInit = {}): Promise<unknown> {
         "The bakery service could not complete this request. Please try again.",
     );
   }
+  if (response.status === 204) return undefined;
   try {
     return await response.json();
   } catch {
@@ -72,6 +89,18 @@ async function request(path: string, init: RequestInit = {}): Promise<unknown> {
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
+const MONEY = /^-?\d+\.\d{2}$/;
+function profitLine(value: unknown): boolean {
+  return (
+    record(value) &&
+    [value.income, value.expenses, value.profit].every(
+      (v) => typeof v === "string" && MONEY.test(v),
+    ) &&
+    (value.margin === null ||
+      (typeof value.margin === "string" && /^-?\d+\.\d{4}$/.test(value.margin))) &&
+    Number.isInteger(value.transactions)
+  );
+}
 function invalid(): never {
   throw new ApiError(
     502,
@@ -80,6 +109,20 @@ function invalid(): never {
 }
 
 export const api = {
+  async login(email: string, password: string): Promise<void> {
+    try {
+      await request("/auth/login", { method: "POST", headers: {
+        "Content-Type": "application/json", "X-Requested-With": "BakeFlow",
+      }, body: JSON.stringify({ email, password }) });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401)
+        throw new ApiError(401, "Email or password is incorrect.");
+      throw error;
+    }
+  },
+  async logout(csrfToken: string): Promise<void> {
+    await request("/auth/logout", { method: "POST", headers: { "X-CSRF-Token": csrfToken } });
+  },
   async session(): Promise<Session> {
     const value = await request("/session");
     if (
@@ -142,6 +185,22 @@ export const api = {
     )
       return invalid();
     return value as Submission;
+  },
+  async profitability(): Promise<Profitability> {
+    const value = await request("/finance/profitability");
+    if (
+      !record(value) ||
+      !profitLine(value.overall) ||
+      !profitLine(value.general) ||
+      !Array.isArray(value.byOrder) ||
+      !value.byOrder.every((o) => profitLine(o) && record(o) && typeof o.orderId === "string") ||
+      !Array.isArray(value.byProduct) ||
+      !value.byProduct.every(
+        (p) => profitLine(p) && record(p) && typeof p.productId === "string" && typeof p.name === "string",
+      )
+    )
+      return invalid();
+    return value as Profitability;
   },
   async confirm(confirmationToken: string, csrfToken: string): Promise<DraftReceipt> {
     const value = await request("/order-requests/confirm", {
