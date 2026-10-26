@@ -77,3 +77,36 @@ def test_period_includes_its_start_and_excludes_its_end(store, seeded, profitabi
 def test_period_bounds_need_a_time_zone(profitability):
     with pytest.raises(ValueError):
         profitability.summary(period_start=datetime(2026, 10, 1))
+
+
+def test_api_returns_the_summary_as_decimal_strings(store, seeded):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.auth.access import Identity, require_owner
+    from app.config import Settings
+    from app.pricing_bookkeeping.routes import make_router
+
+    cupcakes = seeded.products["Vanilla cupcake"]
+    order = cupcake_order(store, seeded)
+    record(store, seeded, "R-1", "Income", "94.23", order_id=order, product_id=cupcakes)
+    record(store, seeded, "INV-1", "Expense", "14.96", order_id=order, product_id=cupcakes)
+    record(store, seeded, "INV-2", "Expense", "50.00", days=10)
+
+    app = FastAPI()
+    app.include_router(make_router(Settings(_env_file=None), store=store))
+    app.dependency_overrides[require_owner] = lambda: Identity(seeded.owner_id, "Owner", "Owner", None)
+    client = TestClient(app)
+
+    body = client.get("/api/finance/profitability").json()
+    assert body["overall"] == {"income": "94.23", "expenses": "64.96", "profit": "29.27",
+                               "margin": "0.3106", "transactions": 3}
+    assert body["general"]["expenses"] == "50.00"
+    assert body["byOrder"] == [{"orderId": str(order), "income": "94.23", "expenses": "14.96",
+                                "profit": "79.27", "margin": "0.8412", "transactions": 2}]
+    assert body["byProduct"][0]["name"] == "Vanilla cupcake"
+
+    first_week = client.get("/api/finance/profitability", params={
+        "start": "2026-10-01T00:00:00+00:00", "end": "2026-10-08T00:00:00+00:00"}).json()
+    assert first_week["overall"]["expenses"] == "14.96"
+    assert first_week["periodStart"] == "2026-10-01T00:00:00+00:00"

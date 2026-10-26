@@ -18,14 +18,24 @@ This PR is the deterministic part of UC-06 step 4 (AR-03). Profitability is reca
 
 From Carl's review of #20: ingredient invoices are usually general, not recorded against one order, so **per-order margins will look close to 100%**. Show `general` expenses next to the per-order and per-product lists, so nobody reads per-order profit as the bakery's real profit. The marketing business summary (BAKE-25) should use `overall` for profit.
 
+## Part 2: API and owner view (#14, #18 and #20 merged)
+
+- **`GET /api/finance/profitability`** (owner only, `Depends(require_owner)` and BAKE-14's `/api/finance` guard):
+  - Optional `start` and `end` give an ISO period with a time zone, including the start and excluding the end. A missing time zone, or an end not after the start, returns 422.
+  - Returns `overall`, `general`, `byOrder` and `byProduct`. Each has `income`, `expenses`, `profit` and `transactions`, plus `margin`, which is `null` when there is no income.
+  - All money is sent as **decimal strings**, never JSON numbers.
+- **Owner "Finance" page** (`frontend/src/owner/FinancePage.tsx`):
+  - Shows overall and general figures, then tables by product and by order.
+  - Displays the server's amounts exactly as given. The client refuses a response containing a non-string or non-2-dp amount.
+  - Shows general costs next to the per-order list, with a note that per-order margins overstate profit, as Carl asked on #20.
+
 ## Still to do on BAKE-34
 
-These follow once the PRs they build on are merged, so no PR is stacked:
-- **API:** owner-only `GET /api/finance/profitability`. Needs #18 (ledger routes) and #14 (sign-in).
-- **AI explanation (UC-06 step 5, 5a):** reuses the BAKE-22 check and retry pattern (#19). If the explanation fails, the figures stay visible.
-- **Owner dashboard view.**
+- **The AI explanation (UC-06 step 5, 5a)** reuses the BAKE-22 check and retry pattern, so it follows once #19 merges. If the explanation fails, the figures shown here stay visible.
 
 ## Verification
+
+- Part 2: `tests/unit/test_profitability_routes.py` (no session gives 401, a customer gets 403, bad periods give 422); an API test in `tests/integration/test_profitability.py` checks the exact decimal strings and a period filter; `frontend/src/test/FinancePage.test.tsx` checks that the figures render exactly and that float money is refused.
 
 - `tests/unit/test_profitability_calculation.py` (8 tests): a fixed sample ledger, worked by hand, gives the expected overall, per-order and per-product figures and margins. Also covered: general expenses, exact cents (0.10 + 0.20 = 0.30), losses, no income, an empty ledger, and an unknown product.
 - `tests/integration/test_profitability.py` (4 tests, PostgreSQL): profit is recalculated from stored `Transaction` rows; a new transaction changes the next summary; period bounds work; a time zone is required.
