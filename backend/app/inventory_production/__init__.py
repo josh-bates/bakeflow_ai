@@ -26,12 +26,23 @@ from app.inventory_production.scheduling import (
     PlanStatus,
     ProductionPlanner,
     ScheduleProposal,
+    ShortageExplanation,
+)
+from app.inventory_production.shortages import (
+    ExplanationOutcome,
+    ExplanationStatus,
+    ListLine,
+    ShortageExplainer,
+    check_explanation,
 )
 
 __all__ = [
     "ExcludedOrder",
+    "ExplanationOutcome",
+    "ExplanationStatus",
     "InventoryProductionAgent",
     "InventoryService",
+    "ListLine",
     "OrderDemand",
     "PlanOutcome",
     "PlanStatus",
@@ -42,8 +53,11 @@ __all__ = [
     "ProductionPlanner",
     "ProductionService",
     "ScheduleProposal",
+    "ShortageExplainer",
+    "ShortageExplanation",
     "StockCheckError",
     "StockCheckResult",
     "Violation",
     "ViolationKind",
+    "check_explanation",
 ]

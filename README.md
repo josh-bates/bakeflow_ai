@@ -28,6 +28,7 @@ These are the report's design responsibilities, not a claim about completed impl
 - [Stage Two assessment and evidence](docs/stage-two.md)
 - [Stage Two architecture proposal (draft, pending team review)](docs/architecture.md)
 - [Jira handoff and initial backlog](docs/jira-handoff.md)
+- [Sprint 2 plan: Pricing and Bookkeeping](docs/sprint-2-pricing-bookkeeping-plan.md)
 - [Contribution workflow](CONTRIBUTING.md)
 - [Source material inventory](docs/source-materials.md)
 - [Original Stage One report](docs/reference/stage-1-report.pdf)
@@ -135,7 +136,7 @@ GitHub Actions runs three checks on every pull request and on every push to `mai
 | **Frontend** (`.github/workflows/frontend.yml`) | `pnpm install --frozen-lockfile`, `pnpm test` (Vitest), `pnpm build` (strict TypeScript check + Vite build) |
 | **Docker** (`.github/workflows/docker.yml`) | Build the image with `docker compose`, start app and db with demo settings until both are healthy, check `/api/health/ready` and the UI, then seed and reset (BAKE-29) |
 
-The checks need no secrets and never call a live LLM: CI uses the Mock client and fixtures, and the Docker check writes throwaway values into its `.env`. A pull request is merged into `main` only once the checks pass and one teammate has approved it. GitHub enforces this with the `main` ruleset, which requires **Backend / test**, **Frontend / check**, one approval and a branch that is up to date with `main` (see [docs/bake-27-ci.md](docs/bake-27-ci.md)). **Docker / build** is enforced once it is added to that ruleset.
+The checks need no secrets and never call a live LLM: CI uses the Mock client and fixtures, and the Docker check writes throwaway values into its `.env`. A pull request is merged into `main` only once the checks pass and one teammate has approved it. GitHub enforces this with the `main` ruleset, which requires **Backend / test**, **Frontend / check**, **Docker / build**, one approval and a branch that is up to date with `main` (see [docs/bake-27-ci.md](docs/bake-27-ci.md)).
 
 Why CI matters for this prototype: four people are integrating modules in parallel against shared contracts (records, the workflow, approvals). CI runs the business-rule tests on every change, including the deterministic money, stock and version-approval checks. That is how a change that breaks someone else's module gets caught before it reaches `main` or the Canvas submission. It also leaves a reviewable record that each merged change was tested. See [docs/bake-27-ci.md](docs/bake-27-ci.md).
 
@@ -192,3 +193,12 @@ retry budget belongs to `WorkflowService` (BAKE-8).
 Set `BAKEFLOW_APP_SECRET` in your private `.env` to a randomly generated value of at least 32 bytes (see `.env.example`). Use the same value across restarts and workers so pending summaries remain valid until their 30-minute expiry. Changing it invalidates pending summaries. Only `development` permits an empty setting, with a warning and a temporary random key; other environments refuse to start without it.
 
 The optional `backend/requirements-local-demo.txt` installs native PostgreSQL via `pgserver==0.1.4`. Its wheel availability depends on OS and Python version: it was tested here on macOS with Python 3.12, and installation is not available on the reviewed Windows/Python 3.13 setup. If pip reports “No matching distribution”, use the supported Docker Compose instructions above. This optional launcher is not required by the application, CI or Docker deployment.
+
+### BAKE-14 sign-in and permissions
+
+After migrating and seeding, sign in with `customer@bakeflow.test` or
+`owner@bakeflow.test` using the seed passwords from your private environment.
+Customers can read only their own orders; owner operations require an owner
+session. Sign out revokes the session. See [BAKE-14 setup and API contract](docs/bake-14-auth.md)
+for CSRF headers, shared permission dependencies and the optional local launcher.
+Deployment requires HTTPS; local development may use loopback HTTP.

@@ -1,5 +1,7 @@
 """UC-01 HTTP boundary. Authentication is supplied by the account integration."""
 import secrets
+import uuid
+from app.auth.access import authenticated
 from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -18,15 +20,16 @@ from app.workflow.order_flow import AIOperationFailed
 
 
 def current_customer(request: Request) -> CustomerIdentity:
-    # BAKE-14 can override this dependency after validating its server-side session.
-    # No identity or role is accepted from request JSON or browser headers.
-    raise HTTPException(401, "Please sign in.")
+    identity = authenticated(request)
+    if identity.role != "Customer" or identity.customer_id is None:
+        raise HTTPException(403, "A customer account is required.")
+    return CustomerIdentity(identity.user_id, identity.customer_id, identity.display_name)
 
 
 def check_csrf(request: Request):
     expected = getattr(request.state, "csrf_token", None)
     supplied = request.headers.get("x-csrf-token", "")
-    if not expected or not secrets.compare_digest(expected, supplied):
+    if not expected or not secrets.compare_digest(expected.encode(), supplied.encode()):
         raise HTTPException(403, "Please refresh your session.")
 
 
@@ -64,11 +67,6 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
             raise HTTPException(409, exc.message) from None
         raise HTTPException(503, "The request could not be completed. Saving was not confirmed; please retry.") from None
 
-    @router.get("/api/session")
-    def session(request: Request, customer: CustomerIdentity = Depends(current_customer)):
-        return {"user": {"displayName": customer.name, "role": "Customer"},
-                "mode": settings.llm_mode, "csrfToken": getattr(request.state, "csrf_token", "")}
-
     @router.post("/api/order-requests", dependencies=[Depends(check_csrf)])
     def preview(body: PreviewBody, customer: CustomerIdentity = Depends(current_customer)):
         try:
@@ -95,4 +93,19 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
                                     "requiredAt": o.required_at.isoformat()} for o in records]}
         except (StoreError, SQLAlchemyError) as exc:
             fail(exc)
+    @router.get("/api/orders/{order_id}")
+    def order(order_id: str, identity=Depends(authenticated)):
+        try:
+            key = uuid.UUID(order_id)
+        except ValueError:
+            raise HTTPException(404, "Order not found.") from None
+        with service().store.unit_of_work() as db:
+            query = select(Order).where(Order.order_id == key)
+            if identity.role != "Owner":
+                query = query.where(Order.customer_id == identity.customer_id)
+            record = db.scalar(query)
+            if record is None:
+                raise HTTPException(404, "Order not found.")
+            return {"id": str(record.order_id), "status": record.status,
+                    "requiredAt": record.required_at.isoformat()}
     return router

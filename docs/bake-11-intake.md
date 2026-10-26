@@ -8,9 +8,9 @@ This branch integrates BAKE-10 (#7), BAKE-7 (#8), BAKE-8 (#4), BAKE-9 (#5) and m
 
 - `POST /api/order-requests {message}` returns `summary`, `issues`, and an optional signed `confirmationToken`. It does not save an Order.
 - `POST /api/order-requests/confirm {confirmationToken}` revalidates the signed, customer-bound summary and writes an Order plus its AuditEntry through ValidatedRecordStore in one transaction. Response contains `orderId` and `status: Draft` only after commit. No stock or recipe changes occur.
-- Repeat confirmation of the same token returns the same order. A PostgreSQL customer-row lock serialises concurrent confirmations. Summaries expire after 30 minutes. Configure the same private `BAKEFLOW_APP_SECRET` for all workers and restarts; only development may fall back to a temporary key that invalidates summaries on restart. Authentication/session integration remains BAKE-14.
+- Repeat confirmation of the same token returns the same order. A PostgreSQL customer-row lock serialises concurrent confirmations. Summaries expire after 30 minutes. Configure the same private `BAKEFLOW_APP_SECRET` for all workers and restarts; only development may fall back to a temporary key that invalidates summaries on restart. Authentication is now supplied by BAKE-14.
 - `GET /api/orders/mine` filters by the server-supplied customer identity.
-- Normal routes fail closed until BAKE-14 supplies `current_customer` and the session's `request.state.csrf_token`. No customer IDs are accepted from request JSON. The explicit local demo below is not a production login system.
+- BAKE-14 supplies `current_customer` and the session's `request.state.csrf_token`. No customer IDs are accepted from request JSON. The local demo uses the same sign-in flow.
 
 ## Model refinements
 
@@ -30,7 +30,7 @@ python -m app.seed
 python -m app.sales.demo
 ```
 
-Open http://127.0.0.1:4176. This explicit development-only entry uses the single seeded customer, checks loopback requests, uses CSRF protection, and runs Mock mode. It writes to the configured demo database. Normal `app.main` does not enable this identity shortcut.
+Open http://127.0.0.1:4176. This development-only entry checks loopback requests and runs Mock mode. Sign in using a seeded account; it writes to the configured demo database.
 
 Mock accepts these canned examples only (not arbitrary natural language):
 
@@ -58,7 +58,7 @@ Installed locally for development; the team's Compose deployment is unchanged.
 .venv/bin/python scripts/run_local_demo.py
 ```
 
-This launcher runs a native PostgreSQL 16.2 server, applies migrations, seeds only an empty database, and starts the Mock demo at http://127.0.0.1:4176. Data persists under the ignored `.local/postgres-demo/` directory. Stop with Ctrl+C; restarting preserves drafts. Seed passwords are generated locally and never logged; this explicitly local demo uses the single seeded customer's identity. Do not deploy this identity shortcut to a public server. Team CI uses PostgreSQL 17.
+This launcher runs a native PostgreSQL 16.2 server, applies migrations, seeds only an empty database, and starts the Mock demo at http://127.0.0.1:4176. Since BAKE-14, new demo data persists under the ignored `.local/auth-demo/` directory; the old database is left untouched. Stop with Ctrl+C; restarting preserves drafts. Generated local account credentials are in `.local/demo-accounts.txt` (owner-readable and gitignored). Sign-in is required. Team CI uses PostgreSQL 17.
 
 ### Validation performed 19 October 2026
 
@@ -67,7 +67,7 @@ This launcher runs a native PostgreSQL 16.2 server, applies migrations, seeds on
 - Browser walkthrough on the persistent local PostgreSQL demo: Jira input → summary → confirm → Draft reference → refresh retains the saved order. Missing allergen disclosure disables confirmation; correcting the input enables a new summary.
 - Screenshot: [summary before confirmation](evidence/bake-11/summary-before-confirmation.png). This captures Mock extraction with real local database persistence, not a live LLM test. Jira attachment and team review remain outstanding.
 
-BAKE-14 authentication integration is still pending. Live provider extraction has not been exercised; no API key is required for these Mock tests.
+BAKE-14 now supplies authentication; see [the sign-in contract](bake-14-auth.md). Live provider extraction has not been exercised; no API key is required for these Mock tests.
 
 
 ### PR review follow-up

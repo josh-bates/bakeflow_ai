@@ -180,10 +180,7 @@ it("distinguishes unavailable order data from an empty list and supports retry",
 it("requires sign-in rather than inventing a customer role", async () => {
   fetchMock.mockResolvedValue(response({}, 401));
   render(<App />);
-  expect(await screen.findByRole("link", { name: "Sign in" })).toHaveAttribute(
-    "href",
-    "/api/auth/login",
-  );
+  expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
 });
@@ -194,7 +191,7 @@ it("clears customer content when an order request reports an expired session", a
     .mockResolvedValueOnce(response({}, 401));
   render(<App />);
   expect(
-    await screen.findByRole("link", { name: "Sign in" }),
+    await screen.findByRole("button", { name: "Sign in" }),
   ).toBeInTheDocument();
   expect(
     screen.queryByLabelText("What would you like to order?"),
@@ -260,4 +257,41 @@ it('homepage shortcuts take the customer to the request form and their orders', 
   await user.click(screen.getByRole('button', { name: /View my orders/ }));
   expect(screen.getByRole('heading', { name: 'Your orders' })).toHaveFocus();
   expect(scroll).toHaveBeenCalledTimes(2);
+});
+
+it("signs in with credentials and signs out without retaining customer content", async () => {
+  const user = userEvent.setup();
+  let loggedIn = false;
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/api/auth/login") { loggedIn = true; return new Response(null, { status: 204 }); }
+    if (url === "/api/auth/logout") { loggedIn = false; return new Response(null, { status: 204 }); }
+    return url === "/api/session" ? response(loggedIn ? session() : {}, loggedIn ? 200 : 401) : response({ orders: [] });
+  });
+  render(<App />);
+  await user.type(await screen.findByLabelText("Email"), "customer@bakeflow.test");
+  await user.type(screen.getByLabelText("Password"), "test-password");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(await screen.findByText("No orders yet")).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith("/api/auth/login", expect.objectContaining({
+    body: JSON.stringify({ email: "customer@bakeflow.test", password: "test-password" }),
+    headers: expect.objectContaining({ "X-Requested-With": "BakeFlow" }),
+  }));
+  await user.click(screen.getByRole("button", { name: "Sign out" }));
+  expect(await screen.findByLabelText("Password")).toHaveValue("");
+  expect(screen.queryByText("No orders yet")).not.toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith("/api/auth/logout", expect.objectContaining({
+    headers: expect.objectContaining({ "X-CSRF-Token": "test-csrf" }),
+  }));
+});
+
+it("reports rejected credentials and clears the password", async () => {
+  const user = userEvent.setup();
+  fetchMock.mockResolvedValue(response({}, 401));
+  render(<App />);
+  await user.type(await screen.findByLabelText("Email"), "customer@bakeflow.test");
+  await user.type(screen.getByLabelText("Password"), "incorrect-password");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Email or password is incorrect.");
+  expect(screen.getByLabelText("Password")).toHaveValue("");
+  expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
 });

@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, pool
 from alembic import context
 from app.config import get_settings
 from app.db.base import Base
+import app.auth.models  # noqa: F401
 
 # Model modules register their tables on Base.metadata when imported.
 import app.shared.records  # noqa: E402,F401  (BAKE-7 core records)
