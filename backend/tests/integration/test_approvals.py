@@ -132,8 +132,10 @@ def test_editing_the_content_drops_the_approval(store, approvals, seeded, conten
 
     assert revised.version == content.version + 1
     assert approvals.is_approved(revised, KIND) is False
-    # The version 1 decision is untouched history, not a cancelled row.
-    assert approvals.is_approved(content, KIND) is True
+    # Version 1 is no longer approved either: it has been superseded.
+    assert approvals.is_approved(content, KIND) is False
+    # Its decision is untouched history, not a cancelled row.
+    assert approvals.is_approved(content, KIND, current_only=False) is True
 
 
 def test_placing_on_the_calendar_keeps_the_approval(store, approvals, seeded, content):
@@ -262,3 +264,13 @@ def test_nothing_is_saved_when_the_callers_transaction_fails(store, service, see
 
     with store.unit_of_work() as session:
         assert session.scalars(select(ApprovalRequest)).all() == []
+
+
+def test_a_superseded_version_is_not_approved(store, approvals, seeded, content):
+    """A caller holding a stale ref must not be told the record is approved."""
+    request_id = approvals.request(content, KIND, actor_id=seeded.owner_id)
+    approvals.decide(request_id, ApprovalDecision.APPROVED, owner_id=seeded.owner_id)
+    revise(store, seeded.owner_id, content)
+
+    assert approvals.is_approved(content, KIND) is False
+    assert approvals.is_approved(content, KIND, current_only=False) is True

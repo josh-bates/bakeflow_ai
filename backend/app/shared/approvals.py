@@ -31,6 +31,7 @@ from app.shared.records import ApprovalDecision, ApprovalRequest, Role, UserAcco
 from app.shared.records._common import utcnow
 from app.shared.refs import RecordRef
 from app.shared.store import (
+    RecordNotFound,
     StaleVersionError,
     StoreError,
     ValidatedRecordStore,
@@ -123,7 +124,12 @@ class ApprovalService:
         request was made (``STALE_VERSION``).
         """
         chosen = ApprovalDecision(decision)
-        request = session.get(ApprovalRequest, request_id)
+        # Locked, so two concurrent decisions cannot both pass the
+        # AlreadyDecided check: the second waits, then sees the first.
+        # The lock lasts only as long as the caller's unit of work.
+        request = session.get(
+            ApprovalRequest, request_id, with_for_update=True, populate_existing=True
+        )
         if request is None:
             raise ApprovalNotRequested(f"approval request {request_id} does not exist")
         if request.decision is not None:
@@ -144,14 +150,35 @@ class ApprovalService:
             action=f"approval.{chosen.lower()}",
         )
 
-    def is_approved(self, session: Session, ref: RecordRef, kind: ApprovalKind | str) -> bool:
-        """True only for a live Approved decision on exactly this version."""
+    def is_approved(
+        self,
+        session: Session,
+        ref: RecordRef,
+        kind: ApprovalKind | str,
+        *,
+        current_only: bool = True,
+    ) -> bool:
+        """True only for a live Approved decision on exactly this version.
+
+        A superseded version is not approved, even though its decision is
+        kept: releasing against a version the record has already moved past
+        is the mistake this guards, and a caller holding a stale ``ref`` would
+        otherwise be told yes. Pass ``current_only=False`` for the historical
+        question -- was this version ever approved?
+        """
         request = self._find(session, ref, kind)
-        return (
+        approved = (
             request is not None
             and request.decision == ApprovalDecision.APPROVED
             and request.invalidated_at is None
         )
+        if not approved or not current_only:
+            return approved
+        try:
+            self._require_current(session, ref)
+        except (StaleVersionError, RecordNotFound):
+            return False
+        return True
 
     def invalidate(
         self,
