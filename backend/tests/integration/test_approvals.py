@@ -2,26 +2,63 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
 
-from app.shared import RecordRef, StaleVersionError
+from app.shared import RecordRef, StaleVersionError, ValidatedRecordStore
 from app.shared.approvals import (
     AlreadyDecided,
     ApprovalKind,
     ApprovalService,
     NotTheOwner,
 )
-from app.shared.records import ApprovalDecision, AuditEntry, Campaign, MarketingContent
+from app.shared.records import (
+    ApprovalDecision,
+    ApprovalRequest,
+    AuditEntry,
+    Campaign,
+    MarketingContent,
+)
 
 KIND = ApprovalKind.MARKETING_CONTENT
 
 
+@dataclass
+class _InOwnTransaction:
+    """Calls ApprovalService in a fresh unit of work, as a lone caller would."""
+
+    store: ValidatedRecordStore
+    service: ApprovalService
+
+    def request(self, *args, **kwargs):
+        with self.store.unit_of_work() as session:
+            return self.service.request(session, *args, **kwargs)
+
+    def decide(self, *args, **kwargs):
+        with self.store.unit_of_work() as session:
+            return self.service.decide(session, *args, **kwargs)
+
+    def is_approved(self, *args, **kwargs):
+        with self.store.unit_of_work() as session:
+            return self.service.is_approved(session, *args, **kwargs)
+
+    def invalidate(self, *args, **kwargs):
+        with self.store.unit_of_work() as session:
+            return self.service.invalidate(session, *args, **kwargs)
+
+
 @pytest.fixture
-def approvals(store) -> ApprovalService:
+def service(store) -> ApprovalService:
+    """The service itself, for callers that own the transaction."""
     return ApprovalService(store)
+
+
+@pytest.fixture
+def approvals(store, service) -> _InOwnTransaction:
+    return _InOwnTransaction(store, service)
 
 
 @pytest.fixture
@@ -201,3 +238,27 @@ def test_the_decision_is_written_to_the_audit_log(store, approvals, seeded, cont
     assert decision_entry.actor_id == seeded.owner_id
     assert decision_entry.after_data["decision"] == ApprovalDecision.APPROVED
     assert decision_entry.after_data["decided_by"] == str(seeded.owner_id)
+
+# --- the caller owns the transaction (BAKE-15 review, BAKE-21/BAKE-23) -----
+
+
+def test_request_and_decide_share_the_callers_transaction(store, service, seeded, content):
+    """A caller can save, request and decide in one unit of work."""
+    with store.unit_of_work() as session:
+        request_id = service.request(session, content, KIND, actor_id=seeded.owner_id)
+        service.decide(session, request_id, ApprovalDecision.APPROVED, owner_id=seeded.owner_id)
+        assert service.is_approved(session, content, KIND) is True
+
+    with store.unit_of_work() as session:
+        assert service.is_approved(session, content, KIND) is True
+
+
+def test_nothing_is_saved_when_the_callers_transaction_fails(store, service, seeded, content):
+    """The approval rolls back with whatever else the caller was saving."""
+    with pytest.raises(RuntimeError):
+        with store.unit_of_work() as session:
+            service.request(session, content, KIND, actor_id=seeded.owner_id)
+            raise RuntimeError("the caller failed after requesting approval")
+
+    with store.unit_of_work() as session:
+        assert session.scalars(select(ApprovalRequest)).all() == []

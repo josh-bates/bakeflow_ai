@@ -10,8 +10,12 @@ decision simply stops matching -- nothing has to be cancelled.
 A routine progress update does not revise the record (IP-04), so it keeps the
 version it was approved at and the approval still holds.
 
-Decisions are written through ``ValidatedRecordStore``, so each one lands in
-the append-only audit log with the deciding owner and the time.
+Every method takes the caller's ``Session`` and runs inside the caller's unit
+of work, matching ``ValidatedRecordStore.commit`` and ``.load``. A caller can
+therefore save a record and request or check its approval atomically, which is
+what BAKE-21 and BAKE-23 need: either both happen or neither does. Decisions
+are written through the store, so each one lands in the append-only audit log
+with the deciding owner and the time.
 """
 
 from __future__ import annotations
@@ -67,34 +71,46 @@ class NotTheOwner(ApprovalError):
 
 @dataclass
 class ApprovalService:
-    """Creates approval requests and records the owner's decision on them."""
+    """Creates approval requests and records the owner's decision on them.
+
+    Call each method inside a ``store.unit_of_work()`` the caller owns::
+
+        with store.unit_of_work() as session:
+            ref = store.commit(session, quote, actor_id=owner_id, action="quote.create")
+            approvals.request(session, ref, ApprovalKind.QUOTATION, actor_id=owner_id)
+    """
 
     store: ValidatedRecordStore
 
-    def request(self, ref: RecordRef, kind: ApprovalKind | str, *, actor_id: uuid.UUID) -> uuid.UUID:
+    def request(
+        self,
+        session: Session,
+        ref: RecordRef,
+        kind: ApprovalKind | str,
+        *,
+        actor_id: uuid.UUID,
+    ) -> uuid.UUID:
         """Ask the owner to decide on exactly this version. Returns the request id.
 
         Idempotent: asking twice for the same (kind, subject, version) returns
         the request that already exists, matching the table's unique key.
         """
-        with self.store.unit_of_work() as session:
-            self._require_current(session, ref)
-            existing = self._find(session, ref, kind)
-            if existing is not None:
-                return existing.request_id
-            request = ApprovalRequest(
-                kind=str(kind),
-                subject_type=ref.record_type,
-                subject_id=ref.record_id,
-                subject_version=ref.version,
-            )
-            self.store.commit(
-                session, request, actor_id=actor_id, action="approval.request"
-            )
-            return request.request_id
+        self._require_current(session, ref)
+        existing = self._find(session, ref, kind)
+        if existing is not None:
+            return existing.request_id
+        request = ApprovalRequest(
+            kind=str(kind),
+            subject_type=ref.record_type,
+            subject_id=ref.record_id,
+            subject_version=ref.version,
+        )
+        self.store.commit(session, request, actor_id=actor_id, action="approval.request")
+        return request.request_id
 
     def decide(
         self,
+        session: Session,
         request_id: uuid.UUID,
         decision: ApprovalDecision | str,
         *,
@@ -107,40 +123,39 @@ class ApprovalService:
         request was made (``STALE_VERSION``).
         """
         chosen = ApprovalDecision(decision)
-        with self.store.unit_of_work() as session:
-            request = session.get(ApprovalRequest, request_id)
-            if request is None:
-                raise ApprovalNotRequested(f"approval request {request_id} does not exist")
-            if request.decision is not None:
-                raise AlreadyDecided(
-                    f"{request.subject_type} {request.subject_id}"
-                    f" version {request.subject_version} is already {request.decision}"
-                )
-            self._require_owner(session, owner_id)
-            self._require_current(session, self._ref_of(request))
-
-            request.decision = str(chosen)
-            request.decided_by = owner_id
-            request.decided_at = utcnow()
-            self.store.commit(
-                session,
-                request,
-                actor_id=owner_id,
-                action=f"approval.{chosen.lower()}",
+        request = session.get(ApprovalRequest, request_id)
+        if request is None:
+            raise ApprovalNotRequested(f"approval request {request_id} does not exist")
+        if request.decision is not None:
+            raise AlreadyDecided(
+                f"{request.subject_type} {request.subject_id}"
+                f" version {request.subject_version} is already {request.decision}"
             )
+        self._require_owner(session, owner_id)
+        self._require_current(session, self._ref_of(request))
 
-    def is_approved(self, ref: RecordRef, kind: ApprovalKind | str) -> bool:
+        request.decision = str(chosen)
+        request.decided_by = owner_id
+        request.decided_at = utcnow()
+        self.store.commit(
+            session,
+            request,
+            actor_id=owner_id,
+            action=f"approval.{chosen.lower()}",
+        )
+
+    def is_approved(self, session: Session, ref: RecordRef, kind: ApprovalKind | str) -> bool:
         """True only for a live Approved decision on exactly this version."""
-        with self.store.unit_of_work() as session:
-            request = self._find(session, ref, kind)
-            return (
-                request is not None
-                and request.decision == ApprovalDecision.APPROVED
-                and request.invalidated_at is None
-            )
+        request = self._find(session, ref, kind)
+        return (
+            request is not None
+            and request.decision == ApprovalDecision.APPROVED
+            and request.invalidated_at is None
+        )
 
     def invalidate(
         self,
+        session: Session,
         ref: RecordRef,
         kind: ApprovalKind | str,
         reason: str,
@@ -152,16 +167,13 @@ class ApprovalService:
         Returns False when there is nothing to invalidate, so a caller can run
         this unconditionally after a change.
         """
-        with self.store.unit_of_work() as session:
-            request = self._find(session, ref, kind)
-            if request is None or request.decision is None or request.invalidated_at is not None:
-                return False
-            request.invalidated_at = utcnow()
-            request.invalidation_reason = reason
-            self.store.commit(
-                session, request, actor_id=actor_id, action="approval.invalidate"
-            )
-            return True
+        request = self._find(session, ref, kind)
+        if request is None or request.decision is None or request.invalidated_at is not None:
+            return False
+        request.invalidated_at = utcnow()
+        request.invalidation_reason = reason
+        self.store.commit(session, request, actor_id=actor_id, action="approval.invalidate")
+        return True
 
     @staticmethod
     def _ref_of(request: ApprovalRequest) -> RecordRef:
