@@ -13,6 +13,7 @@ from app.config import Settings
 from app.db.session import get_sessionmaker
 from app.llm.gateway import LLMGateway, MockLLMClient, LLMCallFailed
 from app.sales.fixtures import mock_for
+from app.sales.tracking import explain_record
 from app.sales.intake import CustomerIdentity, IntakeError, OrderIntake
 from app.shared.records import Order, Product
 from app.shared.store import StoreError, ValidatedRecordStore
@@ -108,4 +109,22 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
                 raise HTTPException(404, "Order not found.")
             return {"id": str(record.order_id), "status": record.status,
                     "requiredAt": record.required_at.isoformat()}
+    @router.get("/api/orders/{order_id}/tracking")
+    def tracking(order_id: str, customer: CustomerIdentity = Depends(current_customer)):
+        try:
+            key = uuid.UUID(order_id)
+        except ValueError:
+            raise HTTPException(404, "Order not found.") from None
+        try:
+            with service().store.unit_of_work() as db:
+                record = db.scalar(select(Order).where(Order.order_id == key, Order.customer_id == customer.customer_id))
+                if record is None:
+                    raise HTTPException(404, "Order not found.")
+                # Take one authorised snapshot, then release the DB transaction
+                # before an external AI call. Refresh obtains a newer version.
+                snapshot = {"id": str(record.order_id), "status": record.status,
+                            "version": record.version, "requiredAt": record.required_at.isoformat()}
+        except (StoreError, SQLAlchemyError):
+            raise HTTPException(503, "Order status is temporarily unavailable. Please try again.") from None
+        return snapshot | explain_record(snapshot["status"], snapshot["version"], snapshot["id"], str(customer.user_id), settings.llm_mode)
     return router
