@@ -1,3 +1,5 @@
+import { FinancePage } from "./FinancePage";
+
 export const ownerPages = {
   approvals: {
     title: "Pending approvals",
@@ -17,6 +19,11 @@ export const ownerPages = {
     detail:
       "Ingredient availability and shortage lists will appear here. Stock calculations are handled by the backend.",
   },
+  finance: {
+    title: "Finance",
+    description: "Profit from your recorded income and expenses.",
+    detail: "",
+  },
   schedules: {
     title: "Schedules",
     description: "Make room for a well-planned baking day.",
@@ -27,6 +34,7 @@ export const ownerPages = {
 export type OwnerPageName = keyof typeof ownerPages;
 
 export function OwnerPage({ page }: { page: OwnerPageName }) {
+  if (page === "finance") return <FinancePage />;
   const content = ownerPages[page];
   return (
     <>

@@ -8,7 +8,16 @@ BAKE-7 provides the Stage 1 core records (``app.shared.records``),
 ``RecordRef`` and ``ValidatedRecordStore``.
 """
 
+from app.shared.approvals import (
+    AlreadyDecided,
+    ApprovalError,
+    ApprovalKind,
+    ApprovalNotRequested,
+    ApprovalService,
+    NotTheOwner,
+)
 from app.shared.refs import RecordRef
+
 from app.shared.store import (
     AuditImmutableError,
     RecordNotFound,
@@ -18,8 +27,16 @@ from app.shared.store import (
     ValidatedRecordStore,
 )
 
+
+
 __all__ = [
+    "AlreadyDecided",
+    "ApprovalError",
+    "ApprovalKind",
+    "ApprovalNotRequested",
+    "ApprovalService",
     "AuditImmutableError",
+    "NotTheOwner",
     "RecordNotFound",
     "RecordRef",
     "RecordValidationError",
