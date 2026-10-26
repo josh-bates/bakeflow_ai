@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
+from app.llm.gateway import LLMCallFailed
+from app.shared.refs import RecordRef
 from app.workflow.order_flow import (
     OrderStage,
-    RecordRef,
     TransitionRejected,
     WorkflowService,
     AIOperationFailed,
 )
 
-ORDER = RecordRef(record_type="Order", record_id="O1", version=1)
+ORDER = RecordRef(record_type="Order", record_id=uuid.uuid4(), version=1)
 
 ALLOWED = [
     (OrderStage.DRAFT, OrderStage.QUOTED),
@@ -22,6 +25,8 @@ ALLOWED = [
     (OrderStage.CONFIRMED, OrderStage.SCHEDULED),
     (OrderStage.CONFIRMED, OrderStage.CANCELLED),
     (OrderStage.SCHEDULED, OrderStage.IN_PRODUCTION),
+    # [BAKE-41] A scheduled order can still be cancelled.
+    (OrderStage.SCHEDULED, OrderStage.CANCELLED),
     (OrderStage.IN_PRODUCTION, OrderStage.COMPLETED),
 ]
 
@@ -29,7 +34,6 @@ BLOCKED = [
     (OrderStage.DRAFT, OrderStage.COMPLETED),
     (OrderStage.DRAFT, OrderStage.CONFIRMED),
     (OrderStage.QUOTED, OrderStage.SCHEDULED),
-    (OrderStage.SCHEDULED, OrderStage.CANCELLED),
     (OrderStage.IN_PRODUCTION, OrderStage.CANCELLED),
     (OrderStage.COMPLETED, OrderStage.CANCELLED),
     (OrderStage.CANCELLED, OrderStage.DRAFT),
@@ -108,7 +112,7 @@ def test_crashing_task_also_burns_attempts():
 
     def attempt():
         attempts.append(1)
-        raise RuntimeError("malformed response")
+        raise LLMCallFailed("malformed response")
 
     with pytest.raises(AIOperationFailed):
         service.run_ai_task(
@@ -150,3 +154,41 @@ def test_failure_is_logged_and_the_order_does_not_move():
     assert entry.event_type == "generateContentFailed"
     assert entry.previous_state == "Draft"
     assert entry.resulting_state == "Draft"
+
+# --- a defect in our own code is not an AI failure (BAKE-41) ---------------
+
+
+def test_a_bug_in_our_own_code_is_not_retried_or_reported_as_an_ai_failure():
+    service = WorkflowService()
+    attempts = []
+
+    def attempt():
+        attempts.append(1)
+        raise TypeError("unsupported operand type(s)")
+
+    with pytest.raises(TypeError):
+        service.run_ai_task(
+            ORDER, OrderStage.DRAFT, attempt, lambda r: True,
+            actor="workflow", event_type="generateContent",
+        )
+
+    assert len(attempts) == 1
+    assert service.audit_log == ()
+
+
+def test_a_caller_can_widen_what_counts_as_retryable():
+    service = WorkflowService()
+    attempts = []
+
+    def attempt():
+        attempts.append(1)
+        raise RuntimeError("the agent's own wrapper failed")
+
+    with pytest.raises(AIOperationFailed):
+        service.run_ai_task(
+            ORDER, OrderStage.DRAFT, attempt, lambda r: True,
+            actor="workflow", event_type="generateContent",
+            retry_on=(RuntimeError,),
+        )
+
+    assert len(attempts) == 3
