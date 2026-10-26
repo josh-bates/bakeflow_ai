@@ -492,8 +492,13 @@ class InventoryService:
             return StockReceipt.of(row, item)
 
     def stock_levels(self) -> list[StockLevel]:
-        """Every ingredient by name: on hand, committed (IP-02) and available."""
-        with self._store.unit_of_work() as session:
+        """Every ingredient by name: on hand, committed (IP-02) and available.
+
+        One snapshot: a deduction (TX-DEDUCT) lowers stock and completes its
+        order together, so reading the two in separate states could show the
+        old stock next to the released commitment, overstating what is left.
+        """
+        with self._store.snapshot() as session:
             items = session.scalars(
                 select(InventoryItem).order_by(InventoryItem.ingredient_name, InventoryItem.item_id)
             ).all()
@@ -615,7 +620,8 @@ def validate_receipt(receipt: ReceiptInput) -> tuple[ReceiptIssue, ...]:
         )
     elif "\x00" in reference:
         issues.append(ReceiptIssue("source_reference", "contains a NUL character"))
-    elif len(reference.strip()) > MAX_REFERENCE_LENGTH:
+    # Measured as stored: upper-casing can lengthen text ("ß" becomes "SS").
+    elif len(reference.strip().upper()) > MAX_REFERENCE_LENGTH:
         issues.append(
             ReceiptIssue("source_reference", f"must be at most {MAX_REFERENCE_LENGTH} characters")
         )

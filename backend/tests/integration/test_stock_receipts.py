@@ -279,6 +279,61 @@ def test_receipt_covers_a_shortage_left_by_a_released_plan(inventory, store, see
     )
 
 
+def test_stock_levels_read_one_state_while_a_deduction_commits(store, seeded):
+    """Stock on hand and commitments come from the same snapshot (review of #33)."""
+    flour = seeded.items["Flour"]
+    order_ref = vanilla_order(store, seeded, status=OrderStatus.IN_PRODUCTION)
+    released_plan(store, seeded, order_ref, "600.000")
+    errors, finished_between_reads = [], []
+
+    def deduct():
+        """TX-DEDUCT in short: 600 g leaves stock and the order completes, together."""
+        try:
+            with store.constraint_guard() as session:
+                item = store.load(session, InventoryItem, flour, lock=True)
+                item.quantity_on_hand -= Decimal("600.000")
+                store.commit(session, item, actor_id=seeded.owner_id, action="test.deduct",
+                             expected_version=item.version, revise=True)
+                order = store.load(session, Order, order_ref.record_id, lock=True)
+                order.status = OrderStatus.COMPLETED
+                store.commit(session, order, actor_id=seeded.owner_id, action="test.complete",
+                             expected_version=order.version)
+        except Exception as exc:  # reported by the assertions below
+            errors.append(exc)
+
+    class DeductionBetweenReads(InventoryService):
+        def committed_needs(self, session, **kwargs):
+            # Stock on hand is read; the deduction commits before the commitments are.
+            writer = threading.Thread(target=deduct)
+            writer.start()
+            writer.join(timeout=10)
+            finished_between_reads.append(not writer.is_alive())
+            return super().committed_needs(session, **kwargs)
+
+    [level] = [lv for lv in DeductionBetweenReads(store).stock_levels() if lv.item_id == flour]
+
+    assert finished_between_reads == [True] and errors == []
+    # Before the deduction, not the old 1,000 g next to no commitment.
+    assert (level.on_hand, level.committed, level.available) == (
+        Decimal("1000.000"), Decimal("600.000"), Decimal("400.000"),
+    )
+    [after] = [lv for lv in InventoryService(store).stock_levels() if lv.item_id == flour]
+    assert (after.on_hand, after.committed, after.available) == (
+        Decimal("400.000"), Decimal("0.000"), Decimal("400.000"),
+    )
+
+
+def test_reference_length_is_checked_as_stored(inventory, store, seeded):
+    # Upper-casing turns "ß" into "SS": 101 of them would store 202 characters.
+    with pytest.raises(ReceiptRejected) as error:
+        inventory.receive_stock(flour_receipt(seeded, reference="ß" * 101), actor_id=seeded.owner_id)
+    assert [issue.field for issue in error.value.issues] == ["source_reference"]
+    assert receipts(store) == []
+
+    saved = inventory.receive_stock(flour_receipt(seeded, reference="ß" * 100), actor_id=seeded.owner_id)
+    assert saved.source_reference == "SS" * 100
+
+
 def test_stock_levels_list_every_ingredient_by_name(inventory, seeded):
     levels = inventory.stock_levels()
     assert [level.ingredient for level in levels] == sorted(seeded.items)
@@ -340,6 +395,13 @@ def test_api_lists_what_needs_fixing(api, store, seeded):
     assert response.status_code == 422
     assert {issue["field"] for issue in response.json()["issues"]} == {"quantity", "source_type"}
     assert receipts(store) == []
+
+
+def test_api_reference_too_long_once_upper_cased_is_422(api, store, seeded):
+    response = api.post("/api/inventory/receipts", json=body(seeded, sourceReference="ß" * 101))
+    assert response.status_code == 422
+    assert [issue["field"] for issue in response.json()["issues"]] == ["source_reference"]
+    assert on_hand(store, seeded.items["Flour"]) == (Decimal("1000.000"), 1)
 
 
 def test_api_unknown_item_is_404(api, seeded):
