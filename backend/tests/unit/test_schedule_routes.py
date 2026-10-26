@@ -55,7 +55,7 @@ def test_a_plan_covers_at_most_two_weeks():
     assert "at most 14 days" in response.json()["detail"]
 
 
-@pytest.mark.parametrize("body", [{"version": 0, "decision": "Approved"}, {"version": 1, "decision": "Maybe"},
+@pytest.mark.parametrize("body", [{"version": 0, "decision": "Approved"}, {"version": 1, "decision": "Rejected"},
                                   {**DECISION, "releasedVersion": 1}])
 def test_decision_must_name_one_version_and_a_known_decision(body):
     url = f"/api/schedules/{uuid.uuid4()}/decision"

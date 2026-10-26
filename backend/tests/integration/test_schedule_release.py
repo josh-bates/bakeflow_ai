@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.auth.access import Identity, require_owner
 from app.config import Settings
@@ -36,7 +36,7 @@ from app.inventory_production import (
 from app.inventory_production.fixtures import GreedyMockPlanner, proposal_reply
 from app.inventory_production.routes import make_router
 from app.llm.gateway import MockLLMClient
-from app.shared import AlreadyDecided, StaleVersionError
+from app.shared import AlreadyDecided, RecordValidationError, StaleVersionError
 from app.shared.records import (
     ApprovalDecision,
     ApprovalRequest,
@@ -47,6 +47,7 @@ from app.shared.records import (
     OrderItem,
     OrderStatus,
     ProductionSchedule,
+    ProductionScheduleVersion,
     ProductionTask,
     TaskStatus,
 )
@@ -373,22 +374,135 @@ def test_revision_that_leaves_out_an_order_makes_it_confirmed_again(store, seede
     assert flour_committed(store, seeded) == Decimal("300.000")
 
 
-def test_withheld_plan_is_not_released(store, seeded):
+def test_withheld_plan_stays_pending_and_can_be_approved_later(store, seeded):
     cupcakes = order(store, seeded)
     ref = plan(store, seeded)
 
     outcome = ScheduleRelease(store).withhold(ref.record_id, ref.version, owner_id=seeded.owner_id)
 
+    # UC-04 7b / Fig. 22: "withhold / remain pending"; a later decision resumes.
     assert outcome.status is ReleaseStatus.WITHHELD
     with store.unit_of_work() as session:
-        assert request_for(session, ref).decision == ApprovalDecision.REJECTED
+        request = request_for(session, ref)
+        assert request.decision is None
+        audit = session.scalars(
+            select(AuditEntry).where(
+                AuditEntry.subject_id == request.request_id, AuditEntry.action == "approval.withheld"
+            )
+        ).one()
+        assert audit.actor_id == seeded.owner_id
+        assert store.load(session, ProductionSchedule, ref.record_id).released_version is None
     assert status_of(store, cupcakes) == OrderStatus.CONFIRMED
     shown = view(store, ref)
-    assert (shown.state, shown.notice) == (
-        ScheduleState.NEEDS_REVISION, "You withheld approval of version 1. Request a revised plan."
-    )
+    assert shown.state is ScheduleState.AWAITING_APPROVAL
+    assert shown.notice.startswith("You withheld approval of version 1. It stays unapproved")
+    assert approve(store, seeded, ref).status is ReleaseStatus.RELEASED
+
+
+def test_withholding_a_decided_or_old_version_is_refused(store, seeded):
+    cupcakes = order(store, seeded)
+    first = plan(store, seeded, figure10(cupcakes))
+    revised = plan(store, seeded, figure10(cupcakes, at(7)), schedule_id=first.record_id)
+    release = ScheduleRelease(store)
+
+    with pytest.raises(StaleVersionError):
+        release.withhold(first.record_id, first.version, owner_id=seeded.owner_id)
+    approve(store, seeded, revised)
     with pytest.raises(AlreadyDecided):
+        release.withhold(revised.record_id, revised.version, owner_id=seeded.owner_id)
+
+
+def complete(store, seeded, schedule_ref, order_ref):
+    """Stand-in for BAKE-33's TX-DEDUCT: finish the order's released tasks, deduct once, close it."""
+    with store.constraint_guard() as session:
+        schedule = store.load(session, ProductionSchedule, schedule_ref.record_id)
+        tasks = session.scalars(
+            select(ProductionTask).where(
+                ProductionTask.schedule_id == schedule.schedule_id,
+                ProductionTask.schedule_version == schedule.released_version,
+                ProductionTask.order_id == order_ref.record_id,
+            )
+        ).all()
+        for task in tasks:
+            task.status = TaskStatus.COMPLETED
+            store.commit(session, task, actor_id=seeded.owner_id, action="test.progress")
+        snapshot = session.get(ProductionScheduleVersion, (schedule.schedule_id, schedule.released_version))
+        for item_id, quantity in snapshot.requirements_snapshot[str(order_ref.record_id)].items():
+            item = session.get(InventoryItem, uuid.UUID(item_id))
+            item.quantity_on_hand -= Decimal(quantity)
+            store.commit(session, item, actor_id=seeded.owner_id, action="test.deduct",
+                         expected_version=item.version, revise=True)
+        record = store.load(session, Order, order_ref.record_id)
+        record.status = OrderStatus.COMPLETED
+        store.commit(session, record, actor_id=seeded.owner_id, action="test.complete",
+                     expected_version=record.version)
+
+
+@pytest.mark.parametrize("when", ["before the revision", "while it awaits approval"])
+def test_order_completed_meanwhile_does_not_block_the_rest_of_the_plan(store, seeded, when):
+    done, rest = order(store, seeded, cupcakes=12, due=at(10)), order(store, seeded, cupcakes=12, due=at(12))
+    first = plan(store, seeded)
+    approve(store, seeded, first)
+    if when == "before the revision":
+        complete(store, seeded, first, done)  # the revision leaves it out
+    revised = plan(store, seeded, schedule_id=first.record_id)
+    if when == "while it awaits approval":
+        complete(store, seeded, first, done)  # the revision still holds its tasks
+
+    outcome = approve(store, seeded, revised)
+
+    assert outcome.status is ReleaseStatus.RELEASED, outcome.problems
+    assert (status_of(store, done), status_of(store, rest)) == (OrderStatus.COMPLETED, OrderStatus.SCHEDULED)
+    # Only the remaining order is committed; the completed one was deducted once.
+    assert flour_committed(store, seeded) == Decimal("300.000")
+    with store.unit_of_work() as session:
+        assert session.get(InventoryItem, seeded.items["Flour"]).quantity_on_hand == Decimal("700.000")
+        statuses = {
+            t.order_id: t.status
+            for t in session.scalars(select(ProductionTask).where(ProductionTask.schedule_version == 2))
+        }
+    if when == "while it awaits approval":
+        assert statuses[done.record_id] == TaskStatus.COMPLETED
+    else:
+        assert done.record_id not in statuses
+
+
+def test_completed_order_whose_tasks_the_revision_moves_is_refused(store, seeded):
+    done = order(store, seeded, cupcakes=12)
+    first = plan(store, seeded, figure10(done))
+    approve(store, seeded, first)
+    revised = plan(store, seeded, figure10(done, at(8)), schedule_id=first.record_id)
+    complete(store, seeded, first, done)
+
+    outcome = approve(store, seeded, revised)
+
+    assert outcome.status is ReleaseStatus.BLOCKED
+    assert outcome.problems
+    assert all("is completed, and this plan moves or removes it" in p for p in outcome.problems)
+
+
+def test_failed_save_rolls_back_the_decision_and_the_release(store, seeded, monkeypatch):
+    cupcakes = order(store, seeded)
+    ref = plan(store, seeded)
+    with store.unit_of_work() as session:
+        audited = session.scalar(select(func.count()).select_from(AuditEntry))
+    commit = store.commit
+
+    def failing(session, record, **kwargs):
+        if kwargs.get("action") == "order.schedule_released":
+            raise RecordValidationError("simulated failed save")
+        return commit(session, record, **kwargs)
+
+    monkeypatch.setattr(store, "commit", failing)
+    with pytest.raises(RecordValidationError):
         approve(store, seeded, ref)
+
+    # UC-04 8b: nothing half-done, and no decision left looking usable.
+    with store.unit_of_work() as session:
+        assert request_for(session, ref).decision is None
+        assert store.load(session, ProductionSchedule, ref.record_id).released_version is None
+        assert session.scalar(select(func.count()).select_from(AuditEntry)) == audited
+    assert status_of(store, cupcakes) == OrderStatus.CONFIRMED
 
 
 def test_cancelled_order_frees_its_time_for_another_plan(store, seeded):

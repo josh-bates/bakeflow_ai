@@ -17,6 +17,9 @@ for exactly one ``ProductionSchedule`` version:
    when the draft was made, to the new task with the same ``logical_task_id``
    and unchanged times. A started, blocked or completed task that the new
    version moves or drops is refused; the owner keeps it in a revised plan.
+   An order completed (and deducted, IP-01) meanwhile is not checked for
+   stock or labour again: kept, its tasks must be unchanged; left out, its
+   finished tasks stay recorded in the earlier version.
 4. ``TX-SCHEDULE-RELEASE`` sets ``released_version``, so the new snapshot
    replaces the old commitments in one step. Its orders become Scheduled, and
    Scheduled orders the revision left out become Confirmed again, so they can
@@ -29,8 +32,11 @@ revised plan, which gets a new request. Any other error rolls back the
 decision too, so no approval is ever left looking usable without a release.
 Released is reported only after the commit.
 
-``withhold`` records the owner's Rejected decision (UC-04 7b) and releases
-nothing. ``schedules`` lists the plans with their derived Fig. 22 state [R7].
+``withhold`` (UC-04 7b, Fig. 22 "withhold / remain pending") audits that the
+owner is not approving yet. It records no decision, so the version stays
+AwaitingApproval and unreleased, and a later approval or revision resumes
+the process. ``schedules`` lists the plans with their derived Fig. 22 state
+[R7].
 """
 
 from __future__ import annotations
@@ -55,16 +61,20 @@ from app.inventory_production.scheduling import (
     _work_minutes,
 )
 from app.shared import (
+    AlreadyDecided,
     ApprovalKind,
     ApprovalNotRequested,
     ApprovalService,
+    NotTheOwner,
     RecordNotFound,
     RecordRef,
+    StaleVersionError,
     ValidatedRecordStore,
 )
 from app.shared.records import (
     ApprovalDecision,
     ApprovalRequest,
+    AuditEntry,
     BakerySettings,
     Order,
     OrderStatus,
@@ -72,13 +82,16 @@ from app.shared.records import (
     ProductionSchedule,
     ProductionScheduleVersion,
     ProductionTask,
+    Role,
     TaskStatus,
+    UserAccount,
 )
 from app.workflow.order_flow import OrderStage, WorkflowService
 
 RELEASE_ACTION = "schedule.released"
 PROGRESS_ACTION = "schedule.progress_carried"
 ORDER_ACTION = "order.schedule_released"
+WITHHOLD_ACTION = "approval.withheld"
 
 
 class ReleaseStatus(StrEnum):
@@ -86,7 +99,7 @@ class ReleaseStatus(StrEnum):
     RELEASED = "Released"
     # The decision is recorded but invalidated; ``problems`` says why (8a/8b).
     BLOCKED = "ReleaseBlocked"
-    # The owner withheld approval (7b); nothing was released.
+    # The owner is not approving yet (7b); still pending, nothing released.
     WITHHELD = "Withheld"
 
 
@@ -173,11 +186,28 @@ class ScheduleRelease:
         return outcome
 
     def withhold(self, schedule_id: uuid.UUID, version: int, *, owner_id: uuid.UUID) -> ReleaseOutcome:
-        """Record that the owner does not approve ``version`` (UC-04 7b)."""
+        """Audit that the owner is not approving ``version`` yet (UC-04 7b).
+
+        No decision is recorded, so the request stays pending: the version
+        remains AwaitingApproval and unreleased until the owner approves it
+        or requests a revised plan. A decided or superseded version is
+        refused, as ``ApprovalService.decide`` would refuse it.
+        """
         ref = RecordRef("ProductionSchedule", schedule_id, version)
         with self.store.unit_of_work() as session:
-            request_id = self._request_id(session, ref)
-            self.approvals.decide(session, request_id, ApprovalDecision.REJECTED, owner_id=owner_id)
+            request = session.get(
+                ApprovalRequest, self._request_id(session, ref), with_for_update=True, populate_existing=True
+            )
+            if request.decision is not None:
+                raise AlreadyDecided(f"schedule {schedule_id} version {version} is already {request.decision}")
+            account = session.get(UserAccount, owner_id)
+            if account is None or account.role != Role.OWNER:
+                raise NotTheOwner(f"{owner_id} is not the owner account")
+            latest = self.store.load(session, ProductionSchedule, schedule_id).version
+            if latest != version:
+                raise StaleVersionError(f"schedule {schedule_id} is at version {latest}, not {version}")
+            # The request does not change: this audit entry is the ScheduleApprovalWithheld record.
+            self.store.commit(session, request, actor_id=owner_id, action=WITHHOLD_ACTION)
         return ReleaseOutcome(ReleaseStatus.WITHHELD, ref)
 
     def schedules(self) -> tuple[str, list[ScheduleView]]:
@@ -204,17 +234,26 @@ class ScheduleRelease:
         needs: dict[uuid.UUID, dict[uuid.UUID, Decimal]] = {}
         demands: dict[uuid.UUID, OrderDemand] = {}
         products = {p.product_id: p for p in session.scalars(select(Product))}
+        # Completed orders of the released version: finished and deducted (IP-01).
+        finished: set[uuid.UUID] = set()
         # Every order the release may change, locked in one stable order.
         for order_id in sorted(set(source) | replaced):
             label = f"Order {str(order_id)[:8]}"
             order = self.store.load(session, Order, order_id, lock=True)
             orders.append(order)
+            if order_id in replaced and order.status == OrderStatus.COMPLETED:
+                finished.add(order_id)
             if order_id not in source:
                 continue  # left out by this version; released, it is replaced
             if order.version != source[order_id].version:
                 problems.append(f"{label} has changed since this plan was made.")
             elif order_id in elsewhere:
                 problems.append(f"{label} is now in another released plan.")
+            elif order_id in finished:
+                # Completed while this version waited [C1]: its tasks must stay
+                # as they were and take their Completed status, but its stock is
+                # already deducted and its work done, so neither is checked again.
+                demands[order_id] = OrderDemand(order.required_at, 0)
             elif not (
                 order.status == OrderStatus.CONFIRMED
                 or (order_id in replaced and order.status in (OrderStatus.SCHEDULED, OrderStatus.IN_PRODUCTION))
@@ -245,16 +284,29 @@ class ScheduleRelease:
             busy=ProductionPlanner._busy(session, window, ref.record_id),
         )
         problems += [v.message for v in violations]
-        carried, unsafe = self._carry_progress(session, schedule, tasks, window.zone)
+        carried, unsafe = self._carry_progress(
+            session, schedule, tasks, window.zone, done=finished - set(source)
+        )
         problems += unsafe
         if not self.approvals.is_approved(session, ref, ApprovalKind.SCHEDULE):
             problems.append("The approval is no longer current.")
-        return problems, _Checked(schedule, orders, set(needs), carried)
+        return problems, _Checked(schedule, orders, set(source), carried)
 
     def _carry_progress(
-        self, session: Session, schedule: ProductionSchedule, tasks: Sequence[ProductionTask], zone: ZoneInfo
+        self,
+        session: Session,
+        schedule: ProductionSchedule,
+        tasks: Sequence[ProductionTask],
+        zone: ZoneInfo,
+        *,
+        done: set[uuid.UUID],
     ) -> tuple[list[tuple[ProductionTask, str]], list[str]]:
-        """[C1] Latest statuses to copy, and started work this version would move."""
+        """[C1] Latest statuses to copy, and started work this version would move.
+
+        ``done`` are completed orders this version leaves out. Their finished
+        tasks stay recorded in the earlier version; leaving them out moves no
+        work, so it is not refused.
+        """
         if schedule.released_version is None:
             return [], []
         previous = session.scalars(
@@ -275,7 +327,7 @@ class ScheduleRelease:
             unchanged = new is not None and _planned(new) == _planned(old)
             if unchanged and old.status != TaskStatus.PLANNED:
                 carried.append((new, old.status))
-            elif not unchanged and old.status != TaskStatus.PLANNED:
+            elif not unchanged and old.status != TaskStatus.PLANNED and old.order_id not in done:
                 unsafe.append(
                     f"{_describe(old, zone)} is {_status_words(old.status)}, and this plan moves"
                     " or removes it. Keep it unchanged in a revised plan."
@@ -346,14 +398,28 @@ class ScheduleRelease:
             state, notice = ScheduleState.DRAFT, f"{label} has no approval request. Request a revised plan."
         elif request.decision is None:
             state, notice = ScheduleState.AWAITING_APPROVAL, ""
-        elif request.decision == ApprovalDecision.REJECTED:
-            state = ScheduleState.NEEDS_REVISION
-            notice = f"You withheld approval of {label.lower()}. Request a revised plan."
+            if _withheld(session, request):
+                notice = (
+                    f"You withheld approval of {label.lower()}. It stays unapproved and unreleased"
+                    " until you approve it or request a revised plan."
+                )
         else:
             state = ScheduleState.NEEDS_REVISION
             reason = request.invalidation_reason or "The release did not complete."
             notice = f"{label} could not be released: {reason} Request a revised plan."
         return ScheduleView(ref, state, latest, released, schedule.released_version, notice)
+
+
+def _withheld(session: Session, request: ApprovalRequest) -> bool:
+    return session.scalars(
+        select(AuditEntry.audit_id)
+        .where(
+            AuditEntry.subject_type == ApprovalRequest.__record_type__,
+            AuditEntry.subject_id == request.request_id,
+            AuditEntry.action == WITHHOLD_ACTION,
+        )
+        .limit(1)
+    ).first() is not None
 
 
 def _tasks(session: Session, schedule_id: uuid.UUID, version: int) -> list[ProductionTask]:

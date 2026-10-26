@@ -297,8 +297,8 @@ export const api = {
       return invalid();
     return value as PlanResult;
   },
-  /** Approves (and so tries to release) or withholds exactly ``version``. */
-  async decideSchedule(scheduleId: string, version: number, decision: "Approved" | "Rejected",
+  /** Approves (and so tries to release) exactly ``version``, or withholds approval for now. */
+  async decideSchedule(scheduleId: string, version: number, decision: "Approved" | "Withheld",
                        csrfToken: string): Promise<ReleaseResult> {
     const value = await request(`/schedules/${encodeURIComponent(scheduleId)}/decision`,
       JSON_POST(csrfToken, { version, decision }));

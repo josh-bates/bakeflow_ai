@@ -48,7 +48,11 @@ function releaseMessage(result: ReleaseResult, version: number): Message {
   if (result.status === "Released")
     return { error: false, text: `Version ${version} is approved and released for production.`, items: [] };
   if (result.status === "Withheld")
-    return { error: false, text: `You withheld approval of version ${version}.`, items: [] };
+    return {
+      error: false,
+      text: `You withheld approval of version ${version}. It stays unapproved until you approve it or request a revised plan.`,
+      items: [],
+    };
   return {
     error: true,
     text: `Version ${version} could not be released. Your approval is recorded, but nothing was released:`,
@@ -116,7 +120,7 @@ export function SchedulesPage({ session }: { session: Session }) {
   }
   const plan = (start: string, end: string, scheduleId?: string) =>
     run(async () => planMessage(await api.planSchedule(start, end, session.csrfToken, scheduleId)));
-  const decide = (s: Schedule, decision: "Approved" | "Rejected") =>
+  const decide = (s: Schedule, decision: "Approved" | "Withheld") =>
     run(async () => releaseMessage(await api.decideSchedule(s.id, s.version, decision, session.csrfToken), s.version));
   const datesValid = Boolean(startDate && endDate && endDate >= startDate);
 
@@ -198,7 +202,7 @@ export function SchedulesPage({ session }: { session: Session }) {
                 <button className="primary" disabled={busy} onClick={() => decide(s, "Approved")}>
                   Approve and release version {s.version}
                 </button>
-                <button className="secondary" disabled={busy} onClick={() => decide(s, "Rejected")}>
+                <button className="secondary" disabled={busy} onClick={() => decide(s, "Withheld")}>
                   Withhold approval
                 </button>
               </>

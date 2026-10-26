@@ -8,7 +8,8 @@ also declares ``require_owner``.
   saved list and the unavailable notice (UC-03 6a).
 - UC-04: the owner asks for a plan or a revised plan for some days (BAKE-20
   proposes it, in Mock mode with ``GreedyMockPlanner``), lists the plans with
-  their derived state and approves or withholds one exact version (BAKE-21).
+  their derived state and approves one exact version, or withholds approval
+  for now (BAKE-21).
   A release that fails its final check is a 200 ``ReleaseBlocked`` with the
   reasons: the owner's decision is recorded, but nothing was released.
 """
@@ -59,7 +60,8 @@ class DecisionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # The exact version the owner reviewed; a newer one is refused.
     version: int = Field(ge=1)
-    decision: Literal["Approved", "Rejected"]
+    # Withheld leaves the version pending (UC-04 7b); it records no decision.
+    decision: Literal["Approved", "Withheld"]
 
 
 def plan_json(outcome: PlanOutcome) -> dict:
