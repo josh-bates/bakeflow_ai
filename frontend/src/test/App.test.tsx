@@ -207,7 +207,7 @@ it("blocks a customer from rendering an owner route", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-it("lets an owner navigate all four clearly labelled placeholder pages", async () => {
+it("lets an owner navigate the clearly labelled placeholder pages", async () => {
   const user = userEvent.setup();
   fetchMock.mockResolvedValue(response(session("Owner")));
   render(<App />);
@@ -215,7 +215,6 @@ it("lets an owner navigate all four clearly labelled placeholder pages", async (
   for (const title of [
     "Orders",
     "Inventory",
-    "Schedules",
     "Pending approvals",
   ]) {
     await user.click(screen.getByRole("link", { name: title }));

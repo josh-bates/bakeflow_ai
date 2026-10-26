@@ -23,9 +23,11 @@
    capacity, labour minutes and other released plans. A new plan becomes
    ``ProductionSchedule`` version 1; a revision becomes the next version, and
    tasks that did not change keep their ``logical_task_id``, preferring the
-   released version's, which release matches progress against [C1]. A draft
-   commits no stock: ``released_version`` is untouched until BAKE-21 releases
-   it after owner approval, which also adds the approval request here.
+   released version's, which release matches progress against [C1]. The
+   owner's approval request for exactly that version is saved in the same
+   transaction (BAKE-21, UC-04 6). A draft commits no stock:
+   ``released_version`` is untouched until ``ScheduleRelease`` releases it
+   after owner approval.
 """
 
 from __future__ import annotations
@@ -54,7 +56,13 @@ from app.inventory_production.production import (
     ProductionService,
 )
 from app.llm.gateway import ILLMClient, LLMCallFailed, parse_structured_reply
-from app.shared import RecordRef, StaleVersionError, ValidatedRecordStore
+from app.shared import (
+    ApprovalKind,
+    ApprovalService,
+    RecordRef,
+    StaleVersionError,
+    ValidatedRecordStore,
+)
 from app.shared.records import (
     BakerySettings,
     InventoryItem,
@@ -168,6 +176,7 @@ class PlanOutcome:
     confidence: float | None = None
     problems: tuple[str, ...] = ()
     excluded: tuple[ExcludedOrder, ...] = ()
+    approval_request_id: uuid.UUID | None = None
 
 
 @dataclass
@@ -343,6 +352,10 @@ class ProductionPlanner(WorkflowService):
                 )
                 self.store.commit(session, record, actor_id=actor_id, action=DRAFT_ACTION)
             schedule_ref = self.store.ref(schedule)
+            # UC-04 6: the version and its review request are saved together.
+            request_id = ApprovalService(self.store).request(
+                session, schedule_ref, ApprovalKind.SCHEDULE, actor_id=actor_id
+            )
         return PlanOutcome(
             PlanStatus.PROPOSED,
             schedule_ref=schedule_ref,
@@ -350,6 +363,7 @@ class ProductionPlanner(WorkflowService):
             rationale=proposal.rationale,
             confidence=proposal.confidence,
             excluded=tuple(excluded),
+            approval_request_id=request_id,
         )
 
     def _candidates(
@@ -433,7 +447,12 @@ class ProductionPlanner(WorkflowService):
 
     @staticmethod
     def _busy(session: Session, window: PlanWindow, schedule_id: uuid.UUID | None) -> list[PlannedTask]:
-        """Tasks of other released plans on the plan's days: the same team does them."""
+        """Tasks of other released plans on the plan's days: the same team does them.
+
+        A cancelled order's tasks free their time, as its stock is freed in
+        ``InventoryService.committed_needs``. A completed order's tasks stay:
+        that time was used.
+        """
         start, end = _bounds(window)
         query = (
             select(ProductionTask)
@@ -444,7 +463,12 @@ class ProductionPlanner(WorkflowService):
                     ProductionSchedule.released_version == ProductionTask.schedule_version,
                 ),
             )
-            .where(ProductionTask.start_at < end, ProductionTask.end_at > start)
+            .join(Order, Order.order_id == ProductionTask.order_id)
+            .where(
+                ProductionTask.start_at < end,
+                ProductionTask.end_at > start,
+                Order.status != OrderStatus.CANCELLED,
+            )
         )
         if schedule_id is not None:
             query = query.where(ProductionSchedule.schedule_id != schedule_id)

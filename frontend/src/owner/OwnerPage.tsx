@@ -1,4 +1,6 @@
+import type { Session } from "../api/client";
 import { FinancePage } from "./FinancePage";
+import { SchedulesPage } from "./SchedulesPage";
 
 export const ownerPages = {
   approvals: {
@@ -27,14 +29,14 @@ export const ownerPages = {
   schedules: {
     title: "Schedules",
     description: "Make room for a well-planned baking day.",
-    detail:
-      "Production plans and their approval status will appear here once the scheduling service is connected.",
+    detail: "",
   },
 };
 export type OwnerPageName = keyof typeof ownerPages;
 
-export function OwnerPage({ page }: { page: OwnerPageName }) {
+export function OwnerPage({ page, session }: { page: OwnerPageName; session: Session }) {
   if (page === "finance") return <FinancePage />;
+  if (page === "schedules") return <SchedulesPage session={session} />;
   const content = ownerPages[page];
   return (
     <>

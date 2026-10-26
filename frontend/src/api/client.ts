@@ -36,6 +36,37 @@ export type Profitability = {
   periodEnd: string | null;
 };
 
+/** UC-04 plans (BAKE-21). Task times come in the bakery's time zone. */
+export type ScheduleTask = {
+  id: string;
+  orderId: string;
+  kind: string;
+  startAt: string;
+  endAt: string;
+  status: string;
+};
+export type ScheduleVersion = { version: number; startDate: string; endDate: string; tasks: ScheduleTask[] };
+export type ScheduleState = "Draft" | "AwaitingApproval" | "NeedsRevision" | "Approved";
+export type Schedule = {
+  id: string;
+  version: number;
+  state: ScheduleState;
+  releasedVersion: number | null;
+  notice: string | null;
+  latest: ScheduleVersion;
+  released: ScheduleVersion | null;
+};
+export type Schedules = { timeZone: string; schedules: Schedule[] };
+export type PlanResult = {
+  status: "Proposed" | "NeedsRevision" | "NoCandidates";
+  schedule: { recordId: string; version: number } | null;
+  rationale: string | null;
+  confidence: number | null;
+  problems: string[];
+  excluded: { orderId: string; reason: string }[];
+};
+export type ReleaseResult = { status: "Released" | "ReleaseBlocked" | "Withheld"; problems: string[] };
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -102,6 +133,38 @@ function profitLine(value: unknown): boolean {
     Number.isInteger(value.transactions)
   );
 }
+function strings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "string");
+}
+function scheduleVersion(value: unknown): boolean {
+  return (
+    record(value) &&
+    Number.isInteger(value.version) &&
+    typeof value.startDate === "string" &&
+    typeof value.endDate === "string" &&
+    Array.isArray(value.tasks) &&
+    value.tasks.every(
+      (t) => record(t) && ["id", "orderId", "kind", "startAt", "endAt", "status"].every((k) => typeof t[k] === "string"),
+    )
+  );
+}
+function schedule(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    Number.isInteger(value.version) &&
+    ["Draft", "AwaitingApproval", "NeedsRevision", "Approved"].includes(String(value.state)) &&
+    (value.releasedVersion === null || Number.isInteger(value.releasedVersion)) &&
+    (value.notice === null || typeof value.notice === "string") &&
+    scheduleVersion(value.latest) &&
+    (value.released === null || scheduleVersion(value.released))
+  );
+}
+const JSON_POST = (csrfToken: string, body: unknown): RequestInit => ({
+  method: "POST",
+  headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+  body: JSON.stringify(body),
+});
 function invalid(): never {
   throw new ApiError(
     502,
@@ -209,6 +272,39 @@ export const api = {
     )
       return invalid();
     return value as Profitability;
+  },
+  async schedules(): Promise<Schedules> {
+    const value = await request("/schedules");
+    if (!record(value) || typeof value.timeZone !== "string" || !Array.isArray(value.schedules) ||
+        !value.schedules.every(schedule)) return invalid();
+    return value as Schedules;
+  },
+  /** Asks for a new plan, or a revised one when ``scheduleId`` is given. */
+  async planSchedule(startDate: string, endDate: string, csrfToken: string, scheduleId?: string): Promise<PlanResult> {
+    const path = scheduleId ? `/schedules/${encodeURIComponent(scheduleId)}/revisions` : "/schedules";
+    const value = await request(path, JSON_POST(csrfToken, { startDate, endDate }));
+    if (
+      !record(value) ||
+      !["Proposed", "NeedsRevision", "NoCandidates"].includes(String(value.status)) ||
+      !(value.schedule === null ||
+        (record(value.schedule) && typeof value.schedule.recordId === "string" && Number.isInteger(value.schedule.version))) ||
+      !(value.rationale === null || typeof value.rationale === "string") ||
+      !(value.confidence === null || typeof value.confidence === "number") ||
+      !strings(value.problems) ||
+      !Array.isArray(value.excluded) ||
+      !value.excluded.every((e) => record(e) && typeof e.orderId === "string" && typeof e.reason === "string")
+    )
+      return invalid();
+    return value as PlanResult;
+  },
+  /** Approves (and so tries to release) or withholds exactly ``version``. */
+  async decideSchedule(scheduleId: string, version: number, decision: "Approved" | "Rejected",
+                       csrfToken: string): Promise<ReleaseResult> {
+    const value = await request(`/schedules/${encodeURIComponent(scheduleId)}/decision`,
+      JSON_POST(csrfToken, { version, decision }));
+    if (!record(value) || !["Released", "ReleaseBlocked", "Withheld"].includes(String(value.status)) ||
+        !strings(value.problems)) return invalid();
+    return value as ReleaseResult;
   },
   async confirm(confirmationToken: string, csrfToken: string): Promise<DraftReceipt> {
     const value = await request("/order-requests/confirm", {
