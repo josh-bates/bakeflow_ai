@@ -3,6 +3,7 @@ import {
   api,
   ApiError,
   type Order,
+  type Tracking,
   type Session,
   type Submission,
   type DraftReceipt,
@@ -16,6 +17,10 @@ export function CustomerPage({
   session: Session;
   onExpired: () => void;
 }) {
+  const [tracking, setTracking] = useState<Tracking | null>(null);
+  const [trackingError, setTrackingError] = useState("");
+  const [trackingBusy, setTrackingBusy] = useState(false);
+  const trackRequest = useRef(0);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -49,6 +54,24 @@ export function CustomerPage({
       active = false;
     };
   }, [reload, onExpired]);
+
+  async function track(orderId: string) {
+    const request = ++trackRequest.current;
+    setTracking(null); setTrackingError(""); setTrackingBusy(true);
+    try {
+      const value = await api.tracking(orderId);
+      if (request === trackRequest.current) {
+        setTracking(value);
+        setOrders(current => current.map(order => order.id === value.id ? { ...order, status: value.status, requiredAt: value.requiredAt } : order));
+      }
+    } catch (e) {
+      if (request !== trackRequest.current) return;
+      if (e instanceof ApiError && e.status === 401) onExpired();
+      else setTrackingError(e instanceof ApiError && e.status === 404 ? "Order not available for your account." : (e as Error).message);
+    } finally {
+      if (request === trackRequest.current) setTrackingBusy(false);
+    }
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -202,6 +225,19 @@ export function CustomerPage({
             Refresh orders
           </button>
         </div>
+        {trackingBusy && <Notice>Loading recorded status and explanation…</Notice>}
+        {trackingError && <Notice error>{trackingError}</Notice>}
+        {tracking && <section className="order-summary" aria-labelledby="tracking-title" aria-live="polite">
+          <h3 id="tracking-title">Order status</h3>
+          <p>Order reference: {tracking.id}</p>
+          <p><strong>Recorded status: {tracking.status}</strong></p>
+          <p>{tracking.explanation}</p>
+          <p className="field-help">Based on saved order version {tracking.version}. Refresh to check for changes. The explanation does not change your order.</p>
+          <div className="actions">
+            <button className="secondary" disabled={trackingBusy} onClick={() => track(tracking.id)}>Refresh status</button>
+            <button className="text-button" onClick={() => setTracking(null)}>Close status</button>
+          </div>
+        </section>}
         {loading ? (
           <Notice>Loading your orders…</Notice>
         ) : loadError ? (
@@ -226,6 +262,7 @@ export function CustomerPage({
                   <th>Details</th>
                   <th>Required time</th>
                   <th>Status</th>
+                  <th>Tracking</th>
                 </tr>
               </thead>
               <tbody>
@@ -245,6 +282,7 @@ export function CustomerPage({
                     <td>
                       <span className="badge">{order.status}</span>
                     </td>
+                    <td><button className="secondary" aria-label={`Track order ${order.id}`} disabled={trackingBusy} onClick={() => track(order.id)}>Track order</button></td>
                   </tr>
                 ))}
               </tbody>

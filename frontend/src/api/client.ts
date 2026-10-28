@@ -9,6 +9,7 @@ export type Order = {
   status: string;
   requiredAt: string | null;
 };
+export type Tracking = { id: string; status: string; version: number; requiredAt: string; explanation: string; explanationAvailable: boolean };
 export type OrderSummary = {
   items: { product: string; quantity: number | null; flavour: string | null; theme: string | null; customisation: string | null }[];
   required_at: string | null;
@@ -18,6 +19,22 @@ export type OrderSummary = {
 };
 export type Submission = { summary: OrderSummary; issues: string[]; confirmationToken: string | null };
 export type DraftReceipt = { orderId: string; status: "Draft" };
+/** Money is a decimal string from the server, never a float (BAKE-34). */
+export type ProfitLine = {
+  income: string;
+  expenses: string;
+  profit: string;
+  margin: string | null;
+  transactions: number;
+};
+export type Profitability = {
+  overall: ProfitLine;
+  general: ProfitLine;
+  byOrder: (ProfitLine & { orderId: string })[];
+  byProduct: (ProfitLine & { productId: string; name: string })[];
+  periodStart: string | null;
+  periodEnd: string | null;
+};
 
 export class ApiError extends Error {
   constructor(
@@ -73,6 +90,18 @@ async function request(path: string, init: RequestInit = {}): Promise<unknown> {
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
+const MONEY = /^-?\d+\.\d{2}$/;
+function profitLine(value: unknown): boolean {
+  return (
+    record(value) &&
+    [value.income, value.expenses, value.profit].every(
+      (v) => typeof v === "string" && MONEY.test(v),
+    ) &&
+    (value.margin === null ||
+      (typeof value.margin === "string" && /^-?\d+\.\d{4}$/.test(value.margin))) &&
+    Number.isInteger(value.transactions)
+  );
+}
 function invalid(): never {
   throw new ApiError(
     502,
@@ -108,6 +137,13 @@ export const api = {
     )
       return invalid();
     return value as Session;
+  },
+  async tracking(orderId: string): Promise<Tracking> {
+    const value = await request(`/orders/${encodeURIComponent(orderId)}/tracking`);
+    if (!record(value) || typeof value.id !== "string" || typeof value.status !== "string" ||
+        !Number.isInteger(value.version) || typeof value.requiredAt !== "string" ||
+        typeof value.explanation !== "string" || typeof value.explanationAvailable !== "boolean") return invalid();
+    return value as Tracking;
   },
   async orders(): Promise<Order[]> {
     const value = await request("/orders/mine");
@@ -157,6 +193,22 @@ export const api = {
     )
       return invalid();
     return value as Submission;
+  },
+  async profitability(): Promise<Profitability> {
+    const value = await request("/finance/profitability");
+    if (
+      !record(value) ||
+      !profitLine(value.overall) ||
+      !profitLine(value.general) ||
+      !Array.isArray(value.byOrder) ||
+      !value.byOrder.every((o) => profitLine(o) && record(o) && typeof o.orderId === "string") ||
+      !Array.isArray(value.byProduct) ||
+      !value.byProduct.every(
+        (p) => profitLine(p) && record(p) && typeof p.productId === "string" && typeof p.name === "string",
+      )
+    )
+      return invalid();
+    return value as Profitability;
   },
   async confirm(confirmationToken: string, csrfToken: string): Promise<DraftReceipt> {
     const value = await request("/order-requests/confirm", {
