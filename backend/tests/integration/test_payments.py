@@ -149,9 +149,9 @@ def test_a_superseded_quote_version_cannot_be_paid(store, seeded, payments):
         accepted = store.load(session, Quote, order.accepted_quote_id)
         newer = Quote(**{c: getattr(accepted, c) for c in (
             "quote_id", "order_id", "source_order_version", "material_cost", "labour_cost",
-            "packaging_cost", "additional_cost", "target_margin", "total")}, version=2)
-        session.add(newer)
-        session.flush()
+            "packaging_cost", "additional_cost", "target_margin", "total")})
+        store.commit(session, newer, actor_id=seeded.owner_id, action="quote.revised",
+                     expected_version=accepted.version)
     with pytest.raises(PaymentError) as refused:
         payments.start(order_id, customer_id=seeded.customer_id)
     assert refused.value.code == "APPROVAL_REQUIRED"
