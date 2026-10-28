@@ -146,7 +146,7 @@ export function App() {
         ) : session.user.role === "Customer" ? (
           <CustomerPage session={session} onExpired={expire} />
         ) : (
-          <OwnerPage page={ownerPage} />
+          <OwnerPage page={ownerPage} session={session} />
         )}
       </main>
       <footer>
