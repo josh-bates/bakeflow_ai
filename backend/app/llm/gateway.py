@@ -16,9 +16,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
+import http.client
 import json
 import os
-import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -95,6 +96,19 @@ class LLMGateway:
     model_name: str = "unset"
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
 
+    def __post_init__(self) -> None:
+        """Refuse a provider URL that would send the API key unencrypted.
+
+        The key travels in an Authorization header, so plain http would put it
+        on the wire in the clear. Checked at construction, before any call.
+        """
+        scheme = urllib.parse.urlsplit(self.base_url).scheme
+        if scheme != "https":
+            raise LLMCallFailed(
+                "provider base_url must use https, not"
+                f" {scheme or 'a missing scheme'}: {self.base_url!r}"
+            )
+
     @classmethod
     def from_environment(cls) -> "LLMGateway":
         """Build a gateway from environment variables, or say what is missing."""
@@ -133,8 +147,15 @@ class LLMGateway:
                 request, timeout=self.timeout_seconds
             ) as response:
                 body = json.loads(response.read().decode("utf-8"))
-        except urllib.error.URLError as exc:
-            raise LLMCallFailed(f"provider call failed: {exc}") from exc
+        except (OSError, http.client.HTTPException) as exc:
+            # OSError covers urllib's URLError and HTTPError, socket timeouts
+            # and connection resets; HTTPException covers a reply that stops
+            # early (IncompleteRead). Callers handle one exception type.
+            raise LLMCallFailed(
+                f"provider call failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        except UnicodeDecodeError as exc:
+            raise LLMCallFailed("provider returned bytes that are not UTF-8") from exc
         except json.JSONDecodeError as exc:
             raise LLMCallFailed(f"provider returned non-JSON: {exc}") from exc
 

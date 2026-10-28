@@ -207,15 +207,13 @@ it("blocks a customer from rendering an owner route", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-it("lets an owner navigate all four clearly labelled placeholder pages", async () => {
+it("lets an owner navigate the clearly labelled placeholder pages", async () => {
   const user = userEvent.setup();
   fetchMock.mockResolvedValue(response(session("Owner")));
   render(<App />);
   await screen.findByRole("heading", { name: "Pending approvals" });
   for (const title of [
     "Orders",
-    "Inventory",
-    "Schedules",
     "Pending approvals",
   ]) {
     await user.click(screen.getByRole("link", { name: title }));
@@ -325,4 +323,30 @@ it("lets a customer end an unsupported request without saving", async () => {
   expect(screen.getByLabelText("What would you like to order?")).toHaveValue("");
   expect(screen.queryByText("Your order summary")).not.toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([url]) => url === "/api/order-requests/confirm")).toBe(false);
+});
+
+it("shows the stored status even when its explanation is unavailable", async () => {
+  const user = userEvent.setup();
+  fetchMock.mockImplementation(async (url: string) => url === "/api/session" ? response(session()) :
+    url === "/api/orders/ORD-18/tracking" ? response({ id: "ORD-18", status: "Draft", version: 1, requiredAt: "2027-10-02T02:00:00Z", explanationAvailable: false, explanation: "Explanation unavailable. Your recorded order status is shown above. Please try again later." }) :
+    response({ orders: [{ id: "ORD-18", status: "Draft", summary: "24 cupcakes", requiredAt: "2027-10-02T02:00:00Z" }] }));
+  render(<App />);
+  await user.click(await screen.findByRole("button", { name: "Track order ORD-18" }));
+  expect(await screen.findByText("Recorded status: Draft")).toBeInTheDocument();
+  expect(screen.getByText(/Explanation unavailable/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Refresh status" })).toBeEnabled();
+});
+
+it("refreshes tracking from the server rather than keeping the old stage", async () => {
+  const user = userEvent.setup();
+  let reads = 0;
+  fetchMock.mockImplementation(async (url: string) => url === "/api/session" ? response(session()) :
+    url === "/api/orders/ORD-18/tracking" ? response({ id: "ORD-18", status: ++reads === 1 ? "Draft" : "Quoted", version: reads, requiredAt: "2027-10-02T02:00:00Z", explanationAvailable: true, explanation: reads === 1 ? "Wait for quotation." : "Review your quotation." }) :
+    response({ orders: [{ id: "ORD-18", status: "Draft", summary: "24 cupcakes", requiredAt: "2027-10-02T02:00:00Z" }] }));
+  render(<App />);
+  await user.click(await screen.findByRole("button", { name: "Track order ORD-18" }));
+  await screen.findByText("Recorded status: Draft");
+  await user.click(screen.getByRole("button", { name: "Refresh status" }));
+  expect(await screen.findByText("Recorded status: Quoted")).toBeInTheDocument();
+  expect(screen.queryByText("Wait for quotation.")).not.toBeInTheDocument();
 });

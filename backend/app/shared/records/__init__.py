@@ -2,8 +2,8 @@
 
 Importing this package registers every table on ``app.db.Base.metadata``.
 Stage 2 extension tables (intake requests, change requests, deductions,
-receipts, transitions, AI requests, notifications, mock payments and
-publications) are added by the stories that need them.
+transitions, AI requests, notifications, mock payments and publications) are
+added by the stories that need them; BAKE-32 adds ingredient receipts.
 """
 
 from app.shared.records._common import (
@@ -28,6 +28,7 @@ from app.shared.records.production import (
     ProductionTask,
     ShoppingList,
 )
+from app.shared.records.receipts import InventoryReceipt
 
 __all__ = [
     "ApprovalDecision",
@@ -40,6 +41,7 @@ __all__ = [
     "Customer",
     "CustomerDecision",
     "InventoryItem",
+    "InventoryReceipt",
     "MarketingContent",
     "Order",
     "OrderItem",

@@ -1,3 +1,8 @@
+import type { Session } from "../api/client";
+import { FinancePage } from "./FinancePage";
+import { InventoryPage } from "./InventoryPage";
+import { SchedulesPage } from "./SchedulesPage";
+
 export const ownerPages = {
   approvals: {
     title: "Pending approvals",
@@ -14,19 +19,25 @@ export const ownerPages = {
   inventory: {
     title: "Inventory",
     description: "Know what’s on hand before you start.",
-    detail:
-      "Ingredient availability and shortage lists will appear here. Stock calculations are handled by the backend.",
+    detail: "",
+  },
+  finance: {
+    title: "Finance",
+    description: "Profit from your recorded income and expenses.",
+    detail: "",
   },
   schedules: {
     title: "Schedules",
     description: "Make room for a well-planned baking day.",
-    detail:
-      "Production plans and their approval status will appear here once the scheduling service is connected.",
+    detail: "",
   },
 };
 export type OwnerPageName = keyof typeof ownerPages;
 
-export function OwnerPage({ page }: { page: OwnerPageName }) {
+export function OwnerPage({ page, session }: { page: OwnerPageName; session: Session }) {
+  if (page === "finance") return <FinancePage />;
+  if (page === "inventory") return <InventoryPage session={session} />;
+  if (page === "schedules") return <SchedulesPage session={session} />;
   const content = ownerPages[page];
   return (
     <>
