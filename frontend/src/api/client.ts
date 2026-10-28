@@ -19,6 +19,31 @@ export type OrderSummary = {
 };
 export type Submission = { summary: OrderSummary; issues: string[]; confirmationToken: string | null };
 export type DraftReceipt = { orderId: string; status: "Draft" };
+/** Stock quantities are decimal strings with three places, never floats (BAKE-32). */
+export type StockItem = {
+  id: string;
+  ingredient: string;
+  unit: string;
+  onHand: string;
+  committed: string;
+  available: string;
+};
+export type ReceiptSource = "Invoice" | "DeliveryNote";
+export type ReceiptInput = {
+  itemId: string;
+  quantity: string;
+  sourceType: ReceiptSource;
+  sourceReference: string;
+};
+export type StockReceipt = ReceiptInput & {
+  id: string;
+  ingredient: string;
+  unit: string;
+  receivedAt: string;
+  onHand: string;
+  /** True when this receipt was already recorded and stock was not raised again. */
+  replayed: boolean;
+};
 /** Money is a decimal string from the server, never a float (BAKE-34). */
 export type ProfitLine = {
   income: string;
@@ -122,6 +147,10 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
 const MONEY = /^-?\d+\.\d{2}$/;
+const QUANTITY = /^-?\d+\.\d{3}$/;
+function quantity(value: unknown): boolean {
+  return typeof value === "string" && QUANTITY.test(value);
+}
 function profitLine(value: unknown): boolean {
   return (
     record(value) &&
@@ -314,5 +343,43 @@ export const api = {
     });
     if (!record(value) || typeof value.orderId !== "string" || !value.orderId || value.status !== "Draft") return invalid();
     return value as DraftReceipt;
+  },
+  async stock(): Promise<StockItem[]> {
+    const value = await request("/inventory/items");
+    if (
+      !record(value) ||
+      !Array.isArray(value.items) ||
+      !value.items.every(
+        (i) =>
+          record(i) &&
+          [i.id, i.ingredient, i.unit].every((v) => typeof v === "string") &&
+          [i.onHand, i.committed, i.available].every(quantity),
+      )
+    )
+      return invalid();
+    return value.items as StockItem[];
+  },
+  /** Records a delivered ingredient; repeating the same receipt never raises stock twice. */
+  async receiveStock(receipt: ReceiptInput, csrfToken: string): Promise<StockReceipt> {
+    const value = await request("/inventory/receipts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(receipt),
+    });
+    if (
+      !record(value) ||
+      [value.id, value.itemId, value.ingredient, value.unit, value.sourceReference].some(
+        (v) => typeof v !== "string",
+      ) ||
+      !["Invoice", "DeliveryNote"].includes(String(value.sourceType)) ||
+      !quantity(value.quantity) ||
+      String(value.quantity).startsWith("-") ||
+      !quantity(value.onHand) ||
+      typeof value.receivedAt !== "string" ||
+      !Number.isFinite(Date.parse(value.receivedAt)) ||
+      typeof value.replayed !== "boolean"
+    )
+      return invalid();
+    return value as StockReceipt;
   },
 };
