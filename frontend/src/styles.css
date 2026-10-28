@@ -16,6 +16,13 @@ main{max-width:1320px;margin:auto;padding:0 48px 72px;min-height:70vh}.eyebrow,.
 .order-summary dt { font-weight: 600; margin-top: 1rem; }
 .order-summary dd { margin: .35rem 0 0; overflow-wrap: anywhere; }
 
+/* BAKE-32 ingredient receipts */
+.receipt-form { margin-top: 24px; }
+.receipt-form label { margin: 0; }
+.receipt-form input, .receipt-form select { display: block; margin-top: 8px; padding: 10px 12px; border: 1px solid #cfc6bd; border-radius: 2px; background: #fff; color: var(--ink); font: inherit; }
+.receipt-form input:focus-visible, .receipt-form select:focus-visible { outline: 2px solid #9b684c; outline-offset: 3px; }
+.receipt-form input[aria-invalid=true] { border-color: #b5654f; }
+
 .sign-in { max-width: 560px; margin: 4rem auto; }
 .sign-in form { display: grid; gap: 1rem; margin-top: 2rem; }
 .sign-in label { font-weight: 600; }

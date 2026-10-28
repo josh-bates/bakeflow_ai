@@ -46,7 +46,7 @@ AI agents play no part in amounts or payment state.
 ## Next
 
 - **Customer UI**, once BAKE-23's customer quote page is merged: a "Pay" button on a confirmed order, the mock checkout (succeed or decline), and the payment status.
-- **Migration chain:** `bake39_payments` follows `bake14_sessions`, like #21 (`bake23_quote_explanation`) and #33 (`bake32_receipts`). Whichever of these merges later re-points its `down_revision`, so Alembic keeps one head.
+- **Migration chain:** `bake39_payments` follows BAKE-32's `bake32_receipts` (re-pointed after #33 merged). #21 (`bake23_quote_explanation`) also follows it; whichever of #21 and #34 merges second is re-pointed to the other, so Alembic keeps one head.
 
 ## Verification
 
