@@ -19,7 +19,8 @@ for exactly one ``ProductionSchedule`` version:
    version moves or drops is refused; the owner keeps it in a revised plan.
    An order completed (and deducted, IP-01) meanwhile is not checked for
    stock or labour again: kept, its tasks must be unchanged; left out, its
-   finished tasks stay recorded in the earlier version.
+   finished tasks stay recorded in the earlier version, and their time still
+   counts against the day's capacity in every later plan.
 4. ``TX-SCHEDULE-RELEASE`` sets ``released_version``, so the new snapshot
    replaces the old commitments in one step. Its orders become Scheduled, and
    Scheduled orders the revision left out become Confirmed again, so they can
@@ -211,8 +212,13 @@ class ScheduleRelease:
         return ReleaseOutcome(ReleaseStatus.WITHHELD, ref)
 
     def schedules(self) -> tuple[str, list[ScheduleView]]:
-        """The bakery's time zone and every schedule, newest first."""
-        with self.store.unit_of_work() as session:
+        """The bakery's time zone and every schedule, newest first.
+
+        Read from one snapshot: a release that commits while the list is read
+        shows either before or after, never an Approved decision on a version
+        that looks unreleased.
+        """
+        with self.store.snapshot() as session:
             zone = session.scalars(select(BakerySettings.time_zone)).one()
             heads = session.scalars(
                 select(ProductionSchedule).order_by(
@@ -281,7 +287,9 @@ class ScheduleRelease:
             [_planned(t) for t in tasks],
             window=window,
             orders=demands,
-            busy=ProductionPlanner._busy(session, window, ref.record_id),
+            busy=ProductionPlanner._busy(
+                session, window, ref.record_id, kept={t.logical_task_id for t in tasks}
+            ),
         )
         problems += [v.message for v in violations]
         carried, unsafe = self._carry_progress(

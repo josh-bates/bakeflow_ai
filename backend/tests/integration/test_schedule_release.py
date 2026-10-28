@@ -517,6 +517,51 @@ def test_cancelled_order_frees_its_time_for_another_plan(store, seeded):
     assert outcome.tasks[0].start_at.astimezone(SYDNEY) == at(6)
 
 
+@pytest.mark.parametrize("plan_for", ["a revision of the same plan", "another plan"])
+def test_completed_order_left_out_of_a_revision_still_uses_its_time(store, seeded, plan_for):
+    # Three 90-minute orders of 300 g flour each: stock covers them all, 240 minutes do not.
+    done, rest = order(store, seeded, cupcakes=12, due=at(10)), order(store, seeded, cupcakes=12, due=at(12))
+    first = plan(store, seeded, figure10(done, at(6)) + figure10(rest, at(7, 30)))
+    approve(store, seeded, first)
+    complete(store, seeded, first, done)  # 06:00-07:30 was used
+    if plan_for == "another plan":
+        revised = plan(store, seeded, figure10(rest, at(7, 30)), schedule_id=first.record_id)
+        assert approve(store, seeded, revised).status is ReleaseStatus.RELEASED
+    extra = order(store, seeded, cupcakes=12, due=at(12))
+    tasks, schedule_id = figure10(extra, at(9)), None
+    if plan_for == "a revision of the same plan":
+        tasks, schedule_id = figure10(rest, at(7, 30)) + tasks, first.record_id
+
+    client = MockLLMClient(default_reply=proposal_reply(tasks))
+    outcome = ProductionPlanner(store, client).propose(
+        DAY, DAY, actor_id=seeded.owner_id, schedule_id=schedule_id
+    )
+
+    assert outcome.status is PlanStatus.NEEDS_REVISION
+    assert "Thu 05 Nov has 270 minutes of work; the team has 240." in outcome.problems
+
+
+def test_plan_list_reads_one_snapshot_while_a_release_commits(store, seeded):
+    order(store, seeded)
+    ref = plan(store, seeded)
+    released = []
+
+    class ReleasedMidway(ScheduleRelease):
+        def _view(self, session, schedule):
+            # Commits after the list read the plan and before it reads the request.
+            writer = threading.Thread(target=lambda: released.append(approve(store, seeded, ref)))
+            writer.start()
+            writer.join(timeout=10)
+            return super()._view(session, schedule)
+
+    _, [shown] = ReleasedMidway(store).schedules()
+
+    assert [o.status for o in released] == [ReleaseStatus.RELEASED]
+    # As before the release, not "could not be released".
+    assert (shown.state, shown.notice) == (ScheduleState.AWAITING_APPROVAL, "")
+    assert view(store, ref).state is ScheduleState.APPROVED
+
+
 @pytest.fixture
 def api(store, seeded) -> TestClient:
     app = FastAPI()

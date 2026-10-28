@@ -72,6 +72,7 @@ from app.shared.records import (
     ProductionSchedule,
     ProductionScheduleVersion,
     ProductionTask,
+    TaskStatus,
 )
 from app.workflow.order_flow import AIOperationFailed, OrderStage, WorkflowService
 
@@ -446,14 +447,24 @@ class ProductionPlanner(WorkflowService):
         return {uuid.UUID(key) for snapshot in session.scalars(query) for key in snapshot}
 
     @staticmethod
-    def _busy(session: Session, window: PlanWindow, schedule_id: uuid.UUID | None) -> list[PlannedTask]:
+    def _busy(
+        session: Session,
+        window: PlanWindow,
+        schedule_id: uuid.UUID | None,
+        *,
+        kept: Collection[uuid.UUID] = (),
+    ) -> list[PlannedTask]:
         """Tasks of other released plans on the plan's days: the same team does them.
 
         A cancelled order's tasks free their time, as its stock is freed in
         ``InventoryService.committed_needs``. A completed order's tasks stay:
-        that time was used.
+        that time was used, also once a revision leaves the order out and its
+        finished tasks stay only in an earlier version [C1], in this plan or
+        another. ``kept`` are the logical tasks of the version being checked,
+        which counts them itself.
         """
         start, end = _bounds(window)
+        overlaps = and_(ProductionTask.start_at < end, ProductionTask.end_at > start)
         query = (
             select(ProductionTask)
             .join(
@@ -464,17 +475,28 @@ class ProductionPlanner(WorkflowService):
                 ),
             )
             .join(Order, Order.order_id == ProductionTask.order_id)
-            .where(
-                ProductionTask.start_at < end,
-                ProductionTask.end_at > start,
-                Order.status != OrderStatus.CANCELLED,
-            )
+            .where(overlaps, Order.status != OrderStatus.CANCELLED)
         )
         if schedule_id is not None:
             query = query.where(ProductionSchedule.schedule_id != schedule_id)
+        busy = list(session.scalars(query))
+        # Each version that carried a finished task holds a copy with the same logical ID.
+        counted = {t.logical_task_id for t in busy} | set(kept)
+        for task in session.scalars(
+            select(ProductionTask)
+            .join(Order, Order.order_id == ProductionTask.order_id)
+            .where(
+                overlaps,
+                Order.status == OrderStatus.COMPLETED,
+                ProductionTask.status == TaskStatus.COMPLETED,
+            )
+        ):
+            if task.logical_task_id not in counted:
+                counted.add(task.logical_task_id)
+                busy.append(task)
         return [
             PlannedTask(t.order_id, t.task_kind, t.start_at, t.end_at)
-            for t in session.scalars(query.order_by(ProductionTask.start_at))
+            for t in sorted(busy, key=lambda t: t.start_at)
         ]
 
     @staticmethod
