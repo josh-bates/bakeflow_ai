@@ -214,7 +214,6 @@ it("lets an owner navigate the clearly labelled placeholder pages", async () => 
   await screen.findByRole("heading", { name: "Pending approvals" });
   for (const title of [
     "Orders",
-    "Schedules",
     "Pending approvals",
   ]) {
     await user.click(screen.getByRole("link", { name: title }));

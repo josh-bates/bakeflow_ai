@@ -36,7 +36,10 @@ ALLOWED_MOVES: dict[OrderStage, frozenset[OrderStage]] = {
     OrderStage.QUOTED: frozenset({OrderStage.CONFIRMED, OrderStage.CANCELLED}),
     OrderStage.CONFIRMED: frozenset({OrderStage.SCHEDULED, OrderStage.CANCELLED}),
     # [BAKE-41] A scheduled order can still be cancelled before production.
-    OrderStage.SCHEDULED: frozenset({OrderStage.IN_PRODUCTION, OrderStage.CANCELLED}),
+    # [BAKE-21] A released revision that leaves it out makes it Confirmed again.
+    OrderStage.SCHEDULED: frozenset(
+        {OrderStage.IN_PRODUCTION, OrderStage.CANCELLED, OrderStage.CONFIRMED}
+    ),
     OrderStage.IN_PRODUCTION: frozenset({OrderStage.COMPLETED}),
     OrderStage.COMPLETED: frozenset(),
     OrderStage.CANCELLED: frozenset(),

@@ -1,7 +1,7 @@
 """Inventory and Production module (AR-02, IP-01–IP-05: UC-03, UC-04).
 
 Home of ``InventoryProductionAgent``, ``InventoryService`` and
-``ProductionService`` (architecture §6.1).
+``ProductionService`` (architecture §6.1), and the schedule release (BAKE-21).
 """
 
 from app.inventory_production.inventory import (
@@ -23,6 +23,13 @@ from app.inventory_production.production import (
     ProductionService,
     Violation,
     ViolationKind,
+)
+from app.inventory_production.release import (
+    ReleaseOutcome,
+    ReleaseStatus,
+    ScheduleRelease,
+    ScheduleState,
+    ScheduleView,
 )
 from app.inventory_production.scheduling import (
     ExcludedOrder,
@@ -60,7 +67,12 @@ __all__ = [
     "ReceiptConflict",
     "ReceiptInput",
     "ReceiptRejected",
+    "ReleaseOutcome",
+    "ReleaseStatus",
     "ScheduleProposal",
+    "ScheduleRelease",
+    "ScheduleState",
+    "ScheduleView",
     "ShortageExplainer",
     "ShortageExplanation",
     "StockCheckError",

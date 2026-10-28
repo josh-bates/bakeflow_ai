@@ -29,3 +29,5 @@ main{max-width:1320px;margin:auto;padding:0 48px 72px;min-height:70vh}.eyebrow,.
 .sign-in input { width: 100%; padding: 1rem; border: 1px solid #cfc7bd; border-radius: 6px; background: #fff; color: #302820; font: inherit; box-sizing: border-box; }
 .sign-in input:focus-visible { outline: 2px solid #826047; outline-offset: 3px; }
 .sign-in button { margin-top: 1rem; }
+/* BAKE-21 production plans */
+.schedule,.plan-form{margin-top:24px}.plan-form label{margin:0}.plan-form input{display:block;margin-top:8px;padding:10px 12px;border:1px solid #cfc6bd;border-radius:2px;background:#fff;color:var(--ink);font:inherit}.schedule .section-heading h2{margin:0}
