@@ -453,6 +453,28 @@ def test_order_completed_meanwhile_does_not_block_the_rest_of_the_plan(store, se
         assert done.record_id not in statuses
 
 
+def test_revision_cannot_add_work_to_an_order_completed_meanwhile(store, seeded):
+    done = order(store, seeded)
+    first = plan(store, seeded, figure10(done))
+    approve(store, seeded, first)
+    # Keeps the bake and finish unchanged, so they can be done meanwhile, and adds a second finish.
+    extra = {**figure10(done)[1], "start_at": at(8).isoformat(), "end_at": at(8, 30).isoformat()}
+    revised = plan(store, seeded, figure10(done) + [extra], schedule_id=first.record_id)
+    complete(store, seeded, first, done)
+
+    outcome = approve(store, seeded, revised)
+
+    # Deducted and Completed, the order could never do that finish (IP-01).
+    assert outcome.status is ReleaseStatus.BLOCKED
+    assert outcome.problems == (
+        f"The finish task for order {str(done.record_id)[:8]} (Thu 08:00–08:30) adds work to order"
+        f" {str(done.record_id)[:8]}, which is already completed. Request a revised plan.",
+    )
+    with store.unit_of_work() as session:
+        assert store.load(session, ProductionSchedule, first.record_id).released_version == 1
+        assert session.get(InventoryItem, seeded.items["Flour"]).quantity_on_hand == Decimal("400.000")
+
+
 def test_order_whose_tasks_the_pending_revision_moves_waits_for_it(store, seeded):
     moved = order(store, seeded, cupcakes=12)
     first = plan(store, seeded, figure10(moved))
