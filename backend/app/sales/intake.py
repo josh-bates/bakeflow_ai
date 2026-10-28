@@ -19,8 +19,9 @@ from sqlalchemy import select
 from app.inventory_production import InventoryService
 from app.llm.gateway import ILLMClient, parse_structured_reply
 from app.shared.records import Customer, Order, OrderItem, Product
+from app.shared.refs import RecordRef
 from app.shared.store import ValidatedRecordStore
-from app.workflow.order_flow import WorkflowService, RecordRef, OrderStage
+from app.workflow.order_flow import WorkflowService, OrderStage
 
 
 class IntakeError(Exception):
@@ -149,7 +150,7 @@ class OrderIntake(WorkflowService):
         products = self.catalogue()
         now = datetime.now(UTC)
         summary = self.run_ai_task(
-            RecordRef("OrderIntake", str(uuid.uuid4()), 1), OrderStage.DRAFT,
+            RecordRef("OrderIntake", uuid.uuid4(), 1), OrderStage.DRAFT,
             lambda: self.agent.extract(message, list(products), now), lambda result: True,
             actor=str(customer.user_id), event_type="extractOrder",
         )
