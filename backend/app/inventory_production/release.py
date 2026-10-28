@@ -408,7 +408,7 @@ class ScheduleRelease:
             state, notice = ScheduleState.AWAITING_APPROVAL, ""
             if _withheld(session, request):
                 notice = (
-                    f"You withheld approval of {label.lower()}. It stays unapproved and unreleased"
+                    f"You haven't approved {label.lower()} yet. It stays unreleased"
                     " until you approve it or request a revised plan."
                 )
         else:

@@ -8,12 +8,15 @@ import {
   type Schedules,
   type ScheduleVersion,
   type Session,
+  type TaskProgress,
 } from "../api/client";
 import { Notice } from "../components/Notice";
 
 // UC-04 (BAKE-20, BAKE-21): the owner asks for a production plan, reviews its
 // current version and approves it for release. Every check runs on the
 // server; task times are shown exactly as given, in the bakery's time zone.
+// IP-01 (BAKE-33): the owner records progress on the released version's
+// tasks; finishing an order's last task deducts its stock once.
 
 const STATES: Record<Schedule["state"], string> = {
   Draft: "Draft",
@@ -30,6 +33,8 @@ const today = () => new Date().toLocaleDateString("en-CA");
 const failure = (err: unknown) => (err instanceof ApiError ? err.message : "The production plans could not be loaded.");
 
 type Message = { error: boolean; text: string; items: string[] };
+type Task = ScheduleVersion["tasks"][number];
+type Progress = TaskProgress["status"];
 
 function planMessage(result: PlanResult): Message {
   const excluded = result.excluded.map((e) => `Order ${short(e.orderId)} was left out: ${e.reason}`);
@@ -50,7 +55,7 @@ function releaseMessage(result: ReleaseResult, version: number): Message {
   if (result.status === "Withheld")
     return {
       error: false,
-      text: `You withheld approval of version ${version}. It stays unapproved until you approve it or request a revised plan.`,
+      text: `You haven't approved version ${version} yet. It stays unreleased until you approve it or request a revised plan.`,
       items: [],
     };
   return {
@@ -60,7 +65,33 @@ function releaseMessage(result: ReleaseResult, version: number): Message {
   };
 }
 
-function Tasks({ caption, version }: { caption: string; version: ScheduleVersion }) {
+function progressMessage(result: TaskProgress, task: Task): Message {
+  const order = short(task.orderId);
+  const d = result.deduction;
+  if (d)
+    return {
+      error: false,
+      text: result.replayed
+        ? `Order ${order} was already complete. Nothing was deducted again:`
+        : `Order ${order} is complete. Its ingredients were deducted once:`,
+      items: d.lines.map((l) => `${l.ingredient}: ${l.quantity} ${l.unit} used, ${l.onHand} ${l.unit} on hand now`),
+    };
+  const done = result.status === "Completed" ? "is done" : "has started";
+  return { error: false, text: `The ${task.kind} task for order ${order} ${done}.`, items: [] };
+}
+
+function Tasks({
+  caption,
+  version,
+  busy = false,
+  onProgress,
+}: {
+  caption: string;
+  version: ScheduleVersion;
+  busy?: boolean;
+  // Only the released version's tasks take progress.
+  onProgress?: (task: Task, status: Progress) => void;
+}) {
   return (
     <div className="table-scroll">
       <table>
@@ -72,6 +103,7 @@ function Tasks({ caption, version }: { caption: string; version: ScheduleVersion
             <th scope="col">Order</th>
             <th scope="col">Task</th>
             <th scope="col">Status</th>
+            {onProgress && <th scope="col">Progress</th>}
           </tr>
         </thead>
         <tbody>
@@ -84,6 +116,32 @@ function Tasks({ caption, version }: { caption: string; version: ScheduleVersion
               <td>Order {short(t.orderId)}</td>
               <td>{t.kind}</td>
               <td>{TASK_STATUS[t.status] ?? t.status}</td>
+              {onProgress && (
+                <td>
+                  <div className="actions">
+                    {(t.status === "Planned" || t.status === "Blocked") && (
+                      <button
+                        className="secondary"
+                        disabled={busy}
+                        aria-label={`Start the ${t.kind} task for order ${short(t.orderId)}`}
+                        onClick={() => onProgress(t, "InProgress")}
+                      >
+                        Start
+                      </button>
+                    )}
+                    {t.status !== "Completed" && (
+                      <button
+                        className="secondary"
+                        disabled={busy}
+                        aria-label={`Mark the ${t.kind} task for order ${short(t.orderId)} done`}
+                        onClick={() => onProgress(t, "Completed")}
+                      >
+                        Mark done
+                      </button>
+                    )}
+                  </div>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -122,6 +180,8 @@ export function SchedulesPage({ session }: { session: Session }) {
     run(async () => planMessage(await api.planSchedule(start, end, session.csrfToken, scheduleId)));
   const decide = (s: Schedule, decision: "Approved" | "Withheld") =>
     run(async () => releaseMessage(await api.decideSchedule(s.id, s.version, decision, session.csrfToken), s.version));
+  const progress = (s: Schedule) => (t: Task, status: Progress) =>
+    run(async () => progressMessage(await api.recordTaskProgress(s.id, t.id, status, session.csrfToken), t));
   const datesValid = Boolean(startDate && endDate && endDate >= startDate);
 
   return (
@@ -194,8 +254,20 @@ export function SchedulesPage({ session }: { session: Session }) {
             {data.timeZone}.
           </p>
           {s.notice && <div className="notice">{s.notice}</div>}
-          <Tasks caption={`Version ${s.version}`} version={s.latest} />
-          {s.released && <Tasks caption={`Released version ${s.released.version}`} version={s.released} />}
+          <Tasks
+            caption={`Version ${s.version}`}
+            version={s.latest}
+            busy={busy}
+            onProgress={s.releasedVersion === s.version ? progress(s) : undefined}
+          />
+          {s.released && (
+            <Tasks
+              caption={`Released version ${s.released.version}`}
+              version={s.released}
+              busy={busy}
+              onProgress={progress(s)}
+            />
+          )}
           <div className="actions">
             {s.state === "AwaitingApproval" && (
               <>
@@ -203,7 +275,7 @@ export function SchedulesPage({ session }: { session: Session }) {
                   Approve and release version {s.version}
                 </button>
                 <button className="secondary" disabled={busy} onClick={() => decide(s, "Withheld")}>
-                  Withhold approval
+                  Not yet
                 </button>
               </>
             )}
