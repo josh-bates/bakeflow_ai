@@ -1,10 +1,6 @@
 """BAKE-23: draft, approve and accept quotes (UC-05 steps 1-3, 5-9), on PostgreSQL.
 
-WAITING FOR BAKE-15: ``StandInApprovals`` below plays Angelina's
-``ApprovalService`` through the ``QuoteApprovals`` interface. It writes real
-``approval_requests`` rows through the store, so the draft-and-request
-atomicity is tested for real; replace it with ``ApprovalService`` once
-BAKE-15 is merged.
+Approvals go through BAKE-15's real ``ApprovalService``.
 
 Jira tests: accepting a superseded version does not confirm the order; a
 revised version cannot be sent without new approval; a simulated OrderService
@@ -20,7 +16,6 @@ import pytest
 from sqlalchemy import func, select
 
 from app.inventory_production import InventoryService
-from app.pricing_bookkeeping.approvals import QUOTE_APPROVAL_KIND
 from app.pricing_bookkeeping.quotation import AdditionalCost
 from app.pricing_bookkeeping.quotes import (
     DECISION_ACTION,
@@ -29,6 +24,7 @@ from app.pricing_bookkeeping.quotes import (
     QuoteService,
 )
 from app.sales.orders import OrderService
+from app.shared.approvals import ApprovalKind
 from app.shared.records import (
     ApprovalDecision,
     ApprovalRequest,
@@ -44,47 +40,13 @@ from app.shared.refs import RecordRef
 REQUIRED_AT = datetime.now(UTC) + timedelta(days=14)
 
 
-class StandInApprovals:
-    """Test stand-in for BAKE-15's ApprovalService (one request per version)."""
-
-    def __init__(self, store):
-        self.store = store
-
-    def request(self, session, ref, *, kind, actor_id):
-        self.store.commit(
-            session,
-            ApprovalRequest(kind=kind, subject_type=ref.record_type, subject_id=ref.record_id,
-                            subject_version=ref.version),
-            actor_id=actor_id, action="approval.requested",
-        )
-
-    def decide(self, session, ref, *, approve, owner_id):
-        request = self._request(session, ref)
-        request.decision = ApprovalDecision.APPROVED if approve else ApprovalDecision.REJECTED
-        request.decided_by = owner_id
-        request.decided_at = datetime.now(UTC)
-        self.store.commit(session, request, actor_id=owner_id, action="approval.decided")
-
-    def is_approved(self, session, ref):
-        request = self._request(session, ref)
-        return request is not None and request.decision == ApprovalDecision.APPROVED
-
-    @staticmethod
-    def _request(session, ref):
-        return session.scalars(select(ApprovalRequest).where(
-            ApprovalRequest.kind == QUOTE_APPROVAL_KIND,
-            ApprovalRequest.subject_id == ref.record_id,
-            ApprovalRequest.subject_version == ref.version,
-        )).one_or_none()
-
-
 def consistent_explanation(calc, units):
     return ExplanationOutcome(f"The quoted price is ${calc.total}.", requires_manual_review=False)
 
 
 @pytest.fixture
 def quotes(store) -> QuoteService:
-    return QuoteService(store, StandInApprovals(store))
+    return QuoteService(store)
 
 
 def priced_order(store, seeded, cupcakes=24) -> uuid.UUID:
@@ -190,8 +152,30 @@ def test_customer_sees_only_an_approved_quote(store, seeded, quotes):
     quotes.withhold(view.ref, owner_id=seeded.owner_id)  # 6b
     assert quotes.customer_view(order_id, customer_id=seeded.customer_id) is None
 
+    # A withheld version stays withheld; the owner revises it instead.
+    with pytest.raises(QuoteError) as refused:
+        quotes.approve(view.ref, owner_id=seeded.owner_id)
+    assert refused.value.code == "CONFLICT"
+    v2 = quotes.revise(view.ref, owner_id=seeded.owner_id)
+    quotes.approve(v2.ref, owner_id=seeded.owner_id)
+    assert quotes.customer_view(order_id, customer_id=seeded.customer_id).ref == v2.ref
+
+
+def test_approval_is_recorded_once_by_approval_service(store, seeded, quotes):
+    order_id = priced_order(store, seeded)
+    view = quotes.draft(order_id, owner_id=seeded.owner_id)
     quotes.approve(view.ref, owner_id=seeded.owner_id)
-    assert quotes.customer_view(order_id, customer_id=seeded.customer_id).ref == view.ref
+    quotes.approve(view.ref, owner_id=seeded.owner_id)  # a double click changes nothing
+
+    with store.unit_of_work() as session:
+        request = session.scalars(
+            select(ApprovalRequest).where(ApprovalRequest.subject_id == view.ref.record_id)
+        ).one()
+    assert request.kind == ApprovalKind.QUOTATION
+    assert request.subject_version == view.ref.version
+    assert request.decision == ApprovalDecision.APPROVED
+    assert request.decided_by == seeded.owner_id
+    assert count(store, AuditEntry, AuditEntry.action == "approval.approved") == 1
 
 
 def test_approval_moves_the_order_to_quoted_without_changing_its_version(store, seeded, quotes):

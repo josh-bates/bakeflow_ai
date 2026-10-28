@@ -1,9 +1,8 @@
 """Quote drafts, owner approval and customer acceptance (UC-05 steps 1-3, 5-9; BAKE-23).
 
-**Waiting for BAKE-15.** Every approval step goes through ``QuoteApprovals``
-(``approvals.py``), the interface Angelina's ``ApprovalService`` will
-implement. Until it is merged, this flow is tested with a stand-in and is not
-exposed over HTTP (routes and UI also need BAKE-14's sign-in).
+Every approval step goes through BAKE-15's ``ApprovalService``, so each
+decision is bound to one quote version and audited. Routes and UI follow in a
+separate PR.
 
 The flow (architecture §4.1.2, §4.2):
 
@@ -33,7 +32,6 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.pricing_bookkeeping.approvals import QUOTE_APPROVAL_KIND, QuoteApprovals
 from app.pricing_bookkeeping.quotation import (
     AdditionalCost,
     CostingInputs,
@@ -44,7 +42,9 @@ from app.pricing_bookkeeping.quotation import (
     QuoteLine,
 )
 from app.sales.orders import OrderService
+from app.shared.approvals import AlreadyDecided, ApprovalKind, ApprovalService
 from app.shared.records import (
+    ApprovalDecision,
     BakerySettings,
     Customer,
     CustomerDecision,
@@ -143,13 +143,13 @@ class QuoteService:
     def __init__(
         self,
         store: ValidatedRecordStore,
-        approvals: QuoteApprovals,
+        approvals: ApprovalService | None = None,
         *,
         finance: FinanceService | None = None,
         orders: OrderService | None = None,
     ):
         self.store = store
-        self.approvals = approvals
+        self.approvals = approvals or ApprovalService(store)
         self.finance = finance or FinanceService()
         self.orders = orders or OrderService(store)
 
@@ -179,7 +179,7 @@ class QuoteService:
                 raise QuoteError("CONFLICT", "this order already has a quote; revise it instead")
             quote = _quote_row(order.order_id, priced, explanation)
             ref = self.store.commit(session, quote, actor_id=owner_id, action=DRAFT_ACTION)
-            self.approvals.request(session, ref, kind=QUOTE_APPROVAL_KIND, actor_id=owner_id)
+            self.approvals.request(session, ref, ApprovalKind.QUOTATION, actor_id=owner_id)
             return QuoteView.of(quote)
 
     def revise(
@@ -212,7 +212,7 @@ class QuoteService:
                 )
             except StaleVersionError:
                 raise QuoteError("STALE_VERSION", "the quote was revised meanwhile") from None
-            self.approvals.request(session, ref, kind=QUOTE_APPROVAL_KIND, actor_id=owner_id)
+            self.approvals.request(session, ref, ApprovalKind.QUOTATION, actor_id=owner_id)
             return QuoteView.of(revision)
 
     # 2. Owner decision ----------------------------------------------------------
@@ -221,7 +221,10 @@ class QuoteService:
         """Approve exactly ``quote`` (step 6-7); the order moves Draft -> Quoted."""
         with self.store.unit_of_work() as session:
             current, order = self._current_for_owner(session, quote)
-            self.approvals.decide(session, quote, approve=True, owner_id=owner_id)
+            if self.approvals.is_approved(session, quote, ApprovalKind.QUOTATION):
+                # A repeated approval (a double click or a retry) changes nothing.
+                return QuoteView.of(current)
+            self._decide(session, quote, ApprovalDecision.APPROVED, owner_id)
             if order.status == OrderStatus.DRAFT:
                 self.orders.mark_quoted(session, order, actor_id=owner_id)
             return QuoteView.of(current)
@@ -230,7 +233,7 @@ class QuoteService:
         """Withhold approval (6b): the quote is not presented to the customer."""
         with self.store.unit_of_work() as session:
             current, _ = self._current_for_owner(session, quote)
-            self.approvals.decide(session, quote, approve=False, owner_id=owner_id)
+            self._decide(session, quote, ApprovalDecision.REJECTED, owner_id)
             return QuoteView.of(current)
 
     def latest(self, order_id: uuid.UUID) -> QuoteView | None:
@@ -294,6 +297,21 @@ class QuoteService:
         units = inputs.lines[0].quantity if len(inputs.lines) == 1 else None
         return _Priced(order.version, calculation, units)
 
+    def _decide(
+        self, session: Session, quote: RecordRef, decision: ApprovalDecision, owner_id: uuid.UUID
+    ) -> None:
+        """Record the owner's decision on the request saved with this version."""
+        # ``request`` is idempotent: it returns the request draft/revise saved.
+        request_id = self.approvals.request(
+            session, quote, ApprovalKind.QUOTATION, actor_id=owner_id
+        )
+        try:
+            self.approvals.decide(session, request_id, decision, owner_id=owner_id)
+        except AlreadyDecided:
+            raise QuoteError(
+                "CONFLICT", "this version already has a decision; revise the quote instead"
+            ) from None
+
     def _require_unchanged(self, session: Session, order: Order, priced: _Priced) -> None:
         """The order must not have changed while the explanation was written."""
         if order.version != priced.order_version or order.status not in _PRICEABLE:
@@ -338,7 +356,9 @@ class QuoteService:
 
     def _presentable(self, session: Session, quote: Quote, order: Order) -> bool:
         ref = RecordRef("Quote", quote.quote_id, quote.version)
-        return quote.source_order_version == order.version and self.approvals.is_approved(session, ref)
+        return quote.source_order_version == order.version and self.approvals.is_approved(
+            session, ref, ApprovalKind.QUOTATION
+        )
 
     def _order(self, session: Session, order_id: uuid.UUID, *, lock: bool = False) -> Order:
         try:
