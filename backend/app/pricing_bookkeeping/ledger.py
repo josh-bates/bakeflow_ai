@@ -182,43 +182,56 @@ class LedgerService:
         self, actor_id: uuid.UUID, entry: TransactionInput, *, now: datetime | None = None
     ) -> LedgerEntry:
         """Store ``entry`` once, or raise a ``LedgerError`` and store nothing."""
-        issues = validate_transaction(entry, now=now)
-        if issues:
-            self._reject(TransactionRejected(issues))
-        entry = _normalised(entry)
         try:
             with self.store.unit_of_work() as session:
-                prior = self._prior(session, actor_id, entry)
-                if prior is not None:
-                    return prior
-                issues = _missing_links(session, entry)
-                if issues:
-                    raise TransactionRejected(issues)
-                row = Transaction(
-                    kind=entry.kind,
-                    amount=entry.amount,
-                    source_type=entry.source_type,
-                    source_reference=entry.source_reference,
-                    occurred_at=entry.occurred_at,
-                    order_id=entry.order_id,
-                    product_id=entry.product_id,
-                    request_key=entry.request_key,
-                    created_by=actor_id,
-                )
-                self.store.commit(session, row, actor_id=actor_id, action=RECORD_ACTION)
-                return LedgerEntry.of(row)
-        except TransactionRejected as exc:
-            self._reject(exc)
+                return self.record_in(session, actor_id, entry, now=now)
         except RecordValidationError as exc:
             # A concurrent submission stored the same source or request key
             # between the check and the insert; report what is now stored.
             if exc.constraint not in (_SOURCE_CONSTRAINT, _REQUEST_KEY_CONSTRAINT):
                 raise
             with self.store.unit_of_work() as session:
-                prior = self._prior(session, actor_id, entry)
+                prior = self._prior(session, actor_id, _normalised(entry))
             if prior is None:
                 raise
             return prior
+
+    def record_in(
+        self,
+        session: Session,
+        actor_id: uuid.UUID,
+        entry: TransactionInput,
+        *,
+        now: datetime | None = None,
+    ) -> LedgerEntry:
+        """``record`` inside the caller's unit of work.
+
+        A mock payment and its income commit together (BAKE-39,
+        TX-PAYMENT-SUCCESS), so the caller owns the transaction.
+        """
+        issues = validate_transaction(entry, now=now)
+        if issues:
+            self._reject(TransactionRejected(issues))
+        entry = _normalised(entry)
+        prior = self._prior(session, actor_id, entry)
+        if prior is not None:
+            return prior
+        issues = _missing_links(session, entry)
+        if issues:
+            self._reject(TransactionRejected(issues))
+        row = Transaction(
+            kind=entry.kind,
+            amount=entry.amount,
+            source_type=entry.source_type,
+            source_reference=entry.source_reference,
+            occurred_at=entry.occurred_at,
+            order_id=entry.order_id,
+            product_id=entry.product_id,
+            request_key=entry.request_key,
+            created_by=actor_id,
+        )
+        self.store.commit(session, row, actor_id=actor_id, action=RECORD_ACTION)
+        return LedgerEntry.of(row)
 
     def transactions(self, *, limit: int = 100) -> list[LedgerEntry]:
         """The most recent transactions first."""

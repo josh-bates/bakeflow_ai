@@ -39,7 +39,7 @@ CORE_TABLES = {
 
 
 def test_metadata_has_stage1_core_tables_and_session_infrastructure():
-    assert set(Base.metadata.tables) == CORE_TABLES | {"auth_sessions"}
+    assert set(Base.metadata.tables) == CORE_TABLES | {"auth_sessions", "mock_payments"}
 
 
 def test_record_ref_round_trips_through_the_wire_shape():
