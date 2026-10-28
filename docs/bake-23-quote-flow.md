@@ -35,7 +35,7 @@ Implements UC-05 steps 1-3 and 5-9 (AR-03): save a versioned quote draft for the
 | Routes (BAKE-14's sign-in is merged) | Owner routes: `POST /api/finance/orders/{id}/quotes` and `/api/finance/quotes/{id}/versions/{v}/approve`, `…/withhold` and `…/revise`. Customer routes: `GET /api/orders/{id}/quote` and `POST …/accept` and `…/reject`. |
 | UI | Owner Approvals page (figures, flags, explanation or "manual review", and actions) and the customer quote card with Accept and Reject. |
 
-**Migration chain:** `bake23_quote_explanation` follows BAKE-14's `bake14_sessions` (re-pointed after #14 merged), so Alembic has one head.
+**Migration chain:** `bake23_quote_explanation` follows BAKE-32's `bake32_receipts` (re-pointed after #33 merged), so Alembic has one head. #34 (BAKE-39) also follows `bake32_receipts`; whichever of #21 and #34 merges second is re-pointed to the other.
 
 ## Review of #21 (Carl)
 

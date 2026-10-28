@@ -5,13 +5,13 @@ figures it explains, so a revised quote gets its own explanation. NULL means
 no usable explanation, and the quote is then flagged for manual review (4a).
 
 Revision ID: bake23_quote_explanation
-Revises: bake14_sessions
+Revises: bake32_receipts
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "bake23_quote_explanation"
-down_revision = "bake14_sessions"
+down_revision = "bake32_receipts"
 branch_labels = None
 depends_on = None
 
