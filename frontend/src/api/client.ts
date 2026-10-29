@@ -27,6 +27,18 @@ export type StockItem = {
   onHand: string;
   committed: string;
   available: string;
+  /** BAKE-37: the owner's reorder level; low means available is below it. */
+  reorderLevel: string;
+  version: number;
+  low: boolean;
+  /** Brings available stock back to twice the reorder level; null unless low. */
+  suggestedReorder: string | null;
+};
+export type LowStockExplanation = {
+  status: "Explained" | "Unavailable" | "NoAlerts" | "Changed";
+  explanation: string | null;
+  notice: string | null;
+  items: StockItem[];
 };
 /** One saved AI operation (BAKE-37, architecture [R5]); it holds no prompt or reply text. */
 export type AIRequestRecord = {
@@ -206,6 +218,17 @@ function schedule(value: unknown): boolean {
     (value.released === null || scheduleVersion(value.released))
   );
 }
+function stockItem(i: unknown): boolean {
+  return (
+    record(i) &&
+    [i.id, i.ingredient, i.unit].every((v) => typeof v === "string") &&
+    [i.onHand, i.committed, i.available, i.reorderLevel].every(quantity) &&
+    !String(i.reorderLevel).startsWith("-") &&
+    Number.isInteger(i.version) &&
+    typeof i.low === "boolean" &&
+    (i.low ? quantity(i.suggestedReorder) : i.suggestedReorder === null)
+  );
+}
 function aiRequest(r: unknown): boolean {
   return (
     record(r) &&
@@ -380,15 +403,32 @@ export const api = {
     if (
       !record(value) ||
       !Array.isArray(value.items) ||
-      !value.items.every(
-        (i) =>
-          record(i) &&
-          [i.id, i.ingredient, i.unit].every((v) => typeof v === "string") &&
-          [i.onHand, i.committed, i.available].every(quantity),
-      )
+      !value.items.every(stockItem)
     )
       return invalid();
     return value.items as StockItem[];
+  },
+  /** BAKE-37: changes one reorder level, for the item version the owner saw. */
+  async setReorderLevel(itemId: string, reorderLevel: string, version: number, csrfToken: string): Promise<StockItem> {
+    const value = await request(`/inventory/items/${encodeURIComponent(itemId)}/reorder-level`, {
+      ...JSON_POST(csrfToken, { reorderLevel, version }),
+      method: "PUT",
+    });
+    if (!stockItem(value)) return invalid();
+    return value as StockItem;
+  },
+  /** BAKE-37: the assistant explains the current alerts; it never changes stock or orders anything. */
+  async explainLowStock(csrfToken: string): Promise<LowStockExplanation> {
+    const value = await request("/inventory/low-stock/explanation", { ...JSON_POST(csrfToken, {}) });
+    if (
+      !record(value) ||
+      !["Explained", "Unavailable", "NoAlerts", "Changed"].includes(String(value.status)) ||
+      ![value.explanation, value.notice].every((v) => v === null || typeof v === "string") ||
+      !Array.isArray(value.items) ||
+      !value.items.every(stockItem)
+    )
+      return invalid();
+    return value as LowStockExplanation;
   },
   /** BAKE-37: the latest saved AI operations, newest first. */
   async aiRequests(): Promise<AIRequestRecord[]> {

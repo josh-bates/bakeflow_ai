@@ -1,4 +1,4 @@
-"""Inventory and production HTTP boundary (BAKE-31, BAKE-32, BAKE-21). Owner only.
+"""Inventory and production HTTP boundary (BAKE-31, BAKE-32, BAKE-21, BAKE-37). Owner only.
 
 ``/api/inventory`` and ``/api/schedules`` are owner-only route families in the
 auth middleware, which also checks the CSRF token on every POST; each handler
@@ -16,6 +16,11 @@ also declares ``require_owner``.
   for now (BAKE-21).
   A release that fails its final check is a 200 ``ReleaseBlocked`` with the
   reasons: the owner's decision is recorded, but nothing was released.
+- BAKE-37 [O1]: stock levels also give each ingredient's reorder level and,
+  when it is low, the suggested reorder; reading them never calls a model.
+  The owner changes a reorder level for the version they saw (409 if it
+  changed), and asks for an explanation of the alerts, which, like UC-03 6a,
+  is still a 200 with the alerts and a notice when the AI fails.
 """
 
 import uuid
@@ -33,14 +38,21 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.auth.access import Identity, require_owner
 from app.config import Settings
 from app.db.session import get_sessionmaker
-from app.inventory_production.fixtures import GreedyMockPlanner, MockShortageExplainer
+from app.inventory_production.fixtures import (
+    GreedyMockPlanner,
+    MockLowStockExplainer,
+    MockShortageExplainer,
+)
 from app.inventory_production.inventory import (
     InventoryService,
     ReceiptConflict,
     ReceiptInput,
     ReceiptRejected,
+    ReorderLevelRejected,
+    StockLevel,
     StockReceipt,
 )
+from app.inventory_production.low_stock import LowStockExplainer
 from app.inventory_production.release import ScheduleRelease, ScheduleView, VersionView
 from app.inventory_production.scheduling import PlanOutcome, PlanStatus, ProductionPlanner
 from app.inventory_production.shortages import ShortageExplainer
@@ -72,6 +84,29 @@ class ReceiptBody(BaseModel):
     quantity: str = Field(max_length=32)
     sourceType: str = Field(max_length=32)
     sourceReference: str = Field(max_length=400)
+
+
+class ReorderLevelBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    # A decimal string in the item's stock unit, such as "200"; never a JSON number.
+    reorderLevel: str = Field(max_length=32)
+    # The item version the owner saw; a newer one is refused.
+    version: int = Field(ge=1)
+
+
+def level_json(level: StockLevel) -> dict:
+    return {
+        "id": str(level.item_id),
+        "ingredient": level.ingredient,
+        "unit": level.unit,
+        "onHand": str(level.on_hand),
+        "committed": str(level.committed),
+        "available": str(level.available),
+        "reorderLevel": str(level.reorder_level),
+        "version": level.version,
+        "low": level.low,
+        "suggestedReorder": None if level.suggested_reorder is None else str(level.suggested_reorder),
+    }
 
 
 def receipt_json(receipt: StockReceipt) -> dict:
@@ -157,7 +192,8 @@ def _check_days(body: PlanBody) -> None:
 
 def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None,
                 client_factory: Callable | None = None,
-                plan_client_factory: Callable | None = None) -> APIRouter:
+                plan_client_factory: Callable | None = None,
+                low_stock_client_factory: Callable | None = None) -> APIRouter:
     router = APIRouter()
 
     def actual_store() -> ValidatedRecordStore:
@@ -183,6 +219,9 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
 
     def planner() -> ProductionPlanner:
         return ProductionPlanner(actual_store(), model_client(plan_client_factory, GreedyMockPlanner))
+
+    def low_stock_explainer() -> LowStockExplainer:
+        return LowStockExplainer(actual_store(), model_client(low_stock_client_factory, MockLowStockExplainer))
 
     @router.post("/api/inventory/shopping-lists/{list_id}/explanation")
     def explain(list_id: uuid.UUID, owner: Identity = Depends(require_owner)):
@@ -220,18 +259,47 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
             levels = InventoryService(actual_store()).stock_levels()
         except (StoreError, SQLAlchemyError):
             raise HTTPException(503, "Stock levels could not be loaded. Please try again.") from None
+        return {"items": [level_json(level) for level in levels]}
+
+    @router.put("/api/inventory/items/{item_id}/reorder-level")
+    def set_reorder_level(item_id: uuid.UUID, body: ReorderLevelBody, owner: Identity = Depends(require_owner)):
+        try:
+            level = Decimal(body.reorderLevel)
+        except InvalidOperation:
+            level = body.reorderLevel  # reported by validation as "must be a number"
+        try:
+            saved = InventoryService(actual_store()).set_reorder_level(
+                item_id, level, expected_version=body.version, actor_id=owner.user_id
+            )
+        except ReorderLevelRejected as exc:
+            return JSONResponse(
+                status_code=422,
+                content={"detail": "The reorder level needs fixing. Nothing was changed.",
+                         "issues": [{"field": "reorderLevel", "message": str(exc)}]},
+            )
+        except RecordNotFound:
+            raise HTTPException(404, "Ingredient not found.") from None
+        except StaleVersionError:
+            raise HTTPException(
+                409, "This ingredient changed since you loaded it. Reload to see its current stock."
+            ) from None
+        except (StoreError, SQLAlchemyError):
+            raise HTTPException(
+                503, "The reorder level could not be saved. Nothing was changed; please retry."
+            ) from None
+        return level_json(saved)
+
+    @router.post("/api/inventory/low-stock/explanation")
+    def explain_low_stock(owner: Identity = Depends(require_owner)):
+        try:
+            outcome = low_stock_explainer().explain(actor_id=owner.user_id)
+        except (StoreError, SQLAlchemyError):
+            raise HTTPException(503, "Stock levels could not be loaded. Please try again.") from None
         return {
-            "items": [
-                {
-                    "id": str(level.item_id),
-                    "ingredient": level.ingredient,
-                    "unit": level.unit,
-                    "onHand": str(level.on_hand),
-                    "committed": str(level.committed),
-                    "available": str(level.available),
-                }
-                for level in levels
-            ]
+            "status": outcome.status,
+            "explanation": outcome.text or None,
+            "notice": outcome.notice or None,
+            "items": [level_json(level) for level in outcome.lines],
         }
 
     @router.post("/api/inventory/receipts")

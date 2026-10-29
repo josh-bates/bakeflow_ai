@@ -15,7 +15,7 @@ in words (review of #19). Every short ingredient must be named with its
 shortfall. No ingredient outside the list may be named: the check knows the
 inventory's ingredients and a short list of common baking ones, so another
 ingredient can still slip through. It does not check which ingredient each
-number is said of.
+number is said of; ``check_facts`` can, and BAKE-37's low-stock check does.
 
 ``WorkflowService.run_ai_task`` owns the budget: an unreadable reply or one
 that fails the check is retried at most twice. If none is usable, the owner
@@ -181,34 +181,89 @@ def check_explanation(text: str, lines: Sequence[ListLine], others: Iterable[str
 
     ``others`` are the names of inventory ingredients that are not on the list.
     """
+    facts = [
+        IngredientFacts(
+            line.ingredient,
+            line.unit,
+            frozenset(n for n in (line.required, line.short_by) if n is not None),
+            line.short_by,
+        )
+        for line in lines
+    ]
+    return check_facts(text, facts, others, flagged="short", key="shortfall")
+
+
+@dataclass(frozen=True)
+class IngredientFacts:
+    """What an explanation may say of one listed ingredient, in its stock unit."""
+
+    ingredient: str
+    unit: str
+    # The only numbers it may give for this ingredient.
+    numbers: frozenset[Decimal]
+    # When set, the ingredient must be named and this number, one of ``numbers``, given.
+    key: Decimal | None = None
+
+
+def check_facts(
+    text: str,
+    facts: Sequence[IngredientFacts],
+    others: Iterable[str],
+    *,
+    flagged: str,
+    key: str,
+    by_ingredient: bool = False,
+) -> list[str]:
+    """Why ``text`` does not fit ``facts``; empty means usable (BAKE-31, BAKE-37).
+
+    ``flagged`` and ``key`` word the problems of a fact with a key, such as
+    "the short ingredient Flour is not named" and "the shortfall of Flour
+    (200) is not given". With ``by_ingredient``, each number must be a figure
+    of the ingredient it is said of (``_said_of``), so a reply cannot swap two
+    ingredients' figures, and each key must be given for its own ingredient.
+    """
+    mentions = sorted(
+        ((m.start(), m.end(), fact) for fact in facts for m in _name(fact.ingredient).finditer(text)),
+        key=lambda mention: mention[:2],
+    )
     problems: list[str] = []
-    mentioned: set[Decimal] = set()
+    given: set[tuple[IngredientFacts, Decimal]] = set()
     for match in _NUMBER.finditer(text):
         shown = match.group()
         if match["sign"]:
             problems.append(f"{shown!r} is signed; list quantities are never negative")
             continue
         number = Decimal(match["number"].replace(",", ""))
-        mentioned.add(number)
-        same = [line for line in lines if number in (line.required, line.short_by)]
+        same = [fact for fact in facts if number in fact.numbers]
         if not same:
             problems.append(f"{shown!r} is not a quantity on the list")
-        elif not any(_unit(line).match(text, match.end()) for line in same):
-            units = ", ".join(sorted({line.unit for line in same}))
+            continue
+        if by_ingredient:
+            said_of = _said_of(text, match, mentions)
+            if said_of is None:
+                problems.append(f"{shown!r} is not said of a listed ingredient")
+                continue
+            if said_of not in same:
+                problems.append(f"{shown!r} is not a quantity of {said_of.ingredient}")
+                continue
+            same = [said_of]
+        given.update((fact, number) for fact in same)
+        if not any(_unit(fact).match(text, match.end()) for fact in same):
+            units = ", ".join(sorted({fact.unit for fact in same}))
             problems.append(f"{shown!r} is not followed by its unit ({units})")
     for match in _NUMBER_WORDS.finditer(text):
         problems.append(f"{match.group()!r} writes a number in words")
 
     listed_spans: list[tuple[int, int]] = []
-    for line in lines:
-        spans = [m.span() for m in _name(line.ingredient).finditer(text)]
+    for fact in facts:
+        spans = [(start, end) for start, end, named in mentions if named is fact]
         listed_spans += spans
-        if line.short_by is None:
+        if fact.key is None:
             continue
         if not spans:
-            problems.append(f"the short ingredient {line.ingredient} is not named")
-        if line.short_by not in mentioned:
-            problems.append(f"the shortfall of {line.ingredient} ({_plain(line.short_by)}) is not given")
+            problems.append(f"the {flagged} ingredient {fact.ingredient} is not named")
+        if (fact, fact.key) not in given:
+            problems.append(f"the {key} of {fact.ingredient} ({_plain(fact.key)}) is not given")
     # A name inside one already matched is not another ingredient: "sugar" in a
     # listed "icing sugar", or "cocoa" in an unlisted "cocoa powder".
     named = list(listed_spans)
@@ -218,7 +273,7 @@ def check_explanation(text: str, lines: Sequence[ListLine], others: Iterable[str
             problems.append(f"{name} is not on the list")
             named += spans
     for name in _COMMON_INGREDIENTS:
-        if any(_name(name).search(line.ingredient) for line in lines):
+        if any(_name(name).search(fact.ingredient) for fact in facts):
             continue
         if any(not _inside(m.span(), named) for m in _name(name).finditer(text)):
             problems.append(f"{name} is not on the list")
@@ -227,6 +282,24 @@ def check_explanation(text: str, lines: Sequence[ListLine], others: Iterable[str
 
 def _inside(span: tuple[int, int], spans: Iterable[tuple[int, int]]) -> bool:
     return any(start <= span[0] and span[1] <= end for start, end in spans)
+
+
+def _said_of(
+    text: str, number: re.Match[str], mentions: Sequence[tuple[int, int, IngredientFacts]]
+) -> IngredientFacts | None:
+    """The listed ingredient a number is said of: the one named straight after
+    it ("300 g of flour", "8 eggs"), otherwise the one named last before it."""
+    for start, _end, fact in mentions:
+        if start >= number.end() and _joins(fact).fullmatch(text, number.end(), start):
+            return fact
+    before = [fact for _start, end, fact in mentions if end <= number.start()]
+    return before[-1] if before else None
+
+
+def _joins(fact: IngredientFacts) -> re.Pattern[str]:
+    """What may stand between a quantity and the name it is said of: its unit and "of"."""
+    units = _UNIT_WORDS.get(fact.unit.lower()) or re.escape(fact.unit)
+    return re.compile(rf"\s*(?:(?:{units})\s+)?(?:of\s+(?:the\s+)?)?", re.IGNORECASE)
 
 
 def _current_order(store: ValidatedRecordStore, session: Session, order_id: uuid.UUID, version: int) -> Order:
@@ -293,9 +366,9 @@ def _name_source(ingredient: str) -> str:
     return r"\s+".join([*(re.escape(word) for word in words[:-1]), ending])
 
 
-def _unit(line: ListLine) -> re.Pattern[str]:
-    """The line's unit straight after a quantity; for a count, its name will do ("12 eggs")."""
-    words = _UNIT_WORDS.get(line.unit.lower()) or f"{re.escape(line.unit)}|{_name_source(line.ingredient)}"
+def _unit(fact: IngredientFacts) -> re.Pattern[str]:
+    """The fact's unit straight after a quantity; for a count, its name will do ("12 eggs")."""
+    words = _UNIT_WORDS.get(fact.unit.lower()) or f"{re.escape(fact.unit)}|{_name_source(fact.ingredient)}"
     return re.compile(rf"\s*(?:{words})\b", re.IGNORECASE)
 
 

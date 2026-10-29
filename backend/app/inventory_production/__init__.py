@@ -1,7 +1,8 @@
 """Inventory and Production module (AR-02, IP-01–IP-05: UC-03, UC-04).
 
 Home of ``InventoryProductionAgent``, ``InventoryService`` and
-``ProductionService`` (architecture §6.1), and the schedule release (BAKE-21).
+``ProductionService`` (architecture §6.1), the schedule release (BAKE-21) and
+the low-stock alerts (BAKE-37).
 """
 
 from app.inventory_production.inventory import (
@@ -11,10 +12,17 @@ from app.inventory_production.inventory import (
     ReceiptConflict,
     ReceiptInput,
     ReceiptRejected,
+    ReorderLevelRejected,
     StockCheckError,
     StockCheckResult,
     StockLevel,
     StockReceipt,
+)
+from app.inventory_production.low_stock import (
+    LowStockExplainer,
+    LowStockOutcome,
+    LowStockStatus,
+    check_low_stock_explanation,
 )
 from app.inventory_production.production import (
     OrderDemand,
@@ -34,6 +42,7 @@ from app.inventory_production.release import (
 from app.inventory_production.scheduling import (
     ExcludedOrder,
     InventoryProductionAgent,
+    LowStockExplanation,
     PlanOutcome,
     PlanStatus,
     ProductionPlanner,
@@ -55,6 +64,10 @@ __all__ = [
     "InventoryProductionAgent",
     "InventoryService",
     "ListLine",
+    "LowStockExplainer",
+    "LowStockExplanation",
+    "LowStockOutcome",
+    "LowStockStatus",
     "OrderDemand",
     "PlanOutcome",
     "PlanStatus",
@@ -67,6 +80,7 @@ __all__ = [
     "ReceiptConflict",
     "ReceiptInput",
     "ReceiptRejected",
+    "ReorderLevelRejected",
     "ReleaseOutcome",
     "ReleaseStatus",
     "ScheduleProposal",
@@ -82,4 +96,5 @@ __all__ = [
     "Violation",
     "ViolationKind",
     "check_explanation",
+    "check_low_stock_explanation",
 ]

@@ -212,3 +212,26 @@ Customers can read only their own orders; owner operations require an owner
 session. Sign out revokes the session. See [BAKE-14 setup and API contract](docs/bake-14-auth.md)
 for CSRF headers, shared permission dependencies and the optional local launcher.
 Deployment requires HTTPS; local development may use loopback HTTP.
+
+### BAKE-37 low-stock alerts (optional feature, design deviation)
+
+Low-stock alerts are a **new optional feature** ([O1] in the architecture), not
+one of the optional features in the Stage One feature diagram. They extend
+AR-02 (Inventory and Production) and keep its purchasing boundary: the system
+suggests, the owner orders.
+
+- Each ingredient has an owner-set **reorder level** in its stock unit, changed
+  on the **Inventory** page for the version the owner saw.
+- An ingredient is **low** when its available stock (on hand less what released
+  plans commit, IP-02) is **below** its reorder level; at the level is not low.
+- The **suggested reorder** brings available stock back to twice the level.
+- Alerts are worked out on every stock read, with no model call and no timer,
+  and never change stock or place an order.
+- When the owner asks, the Inventory and Production agent explains the alerts.
+  Its text must give each ingredient only its own listed figures; if no usable
+  explanation arrives within the shared retry budget, the alerts are shown with
+  a notice.
+
+Known gap: the architecture routes the explanation request through
+`WorkflowService.handle` and `dispatch`, which do not exist yet. Like BAKE-31,
+BAKE-37 calls `WorkflowService.run_ai_task` directly.
