@@ -39,7 +39,7 @@ CORE_TABLES = {
 
 
 # Stage 2 extension tables added by later stories (architecture §5.3).
-EXTENSION_TABLES = {"inventory_receipts"}
+EXTENSION_TABLES = {"inventory_receipts", "ai_requests"}
 
 
 def test_metadata_has_stage1_core_tables_and_session_infrastructure():

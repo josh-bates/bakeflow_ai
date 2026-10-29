@@ -187,6 +187,16 @@ as a fallback. This section will be updated once the team confirms it.
 The gateway makes exactly one provider call per request and does not retry. The
 retry budget belongs to `WorkflowService` (BAKE-8).
 
+Every AI operation that runs through `WorkflowService.run_ai_task` is saved in
+the `ai_requests` table (architecture [R5], added with BAKE-37): the task and
+its subject, who asked, Mock or the provider's host and model, the prompt
+version, each attempt's time and result, the type of any error, and the
+outcome. No prompt, reply, customer text, key or error text is stored. The
+owner sees the latest requests on the **AI activity** page
+(`GET /api/owner/ai-requests`). New AI features need no extra code to be
+recorded, as long as they call the model through `run_ai_task` rather than
+`client.complete()` directly.
+
 
 ### BAKE-11 summary signing and optional local demo
 

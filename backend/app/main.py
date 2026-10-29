@@ -50,6 +50,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from app.pricing_bookkeeping.routes import make_router as make_finance_router
     app.include_router(make_finance_router(settings))
 
+    # [BAKE-37] Every AI operation in a request is saved to ai_requests [R5].
+    from app.workflow.ai_requests import AIRequestLog, AIRequestMiddleware
+    from app.workflow.routes import make_router as make_workflow_router
+    app.add_middleware(AIRequestMiddleware, log=AIRequestLog.for_settings(settings))
+    app.include_router(make_workflow_router(settings))
+
     # Registered last so that every /api route above takes precedence.
     _serve_frontend(app, settings.frontend_dist)
     return app

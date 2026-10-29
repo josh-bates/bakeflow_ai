@@ -248,7 +248,7 @@ class ProductionPlanner(WorkflowService):
         try:
             proposal = self.run_ai_task(
                 subject, OrderStage.CONFIRMED, attempt, usable,
-                actor=str(actor_id), event_type="proposeSchedule",
+                actor=str(actor_id), event_type="proposeSchedule", prompt_version=PROMPT_VERSION,
             )
         except AIOperationFailed:
             return PlanOutcome(

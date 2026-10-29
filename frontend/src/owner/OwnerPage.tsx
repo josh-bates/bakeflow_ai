@@ -1,4 +1,5 @@
 import type { Session } from "../api/client";
+import { AIActivityPage } from "./AIActivityPage";
 import { FinancePage } from "./FinancePage";
 import { InventoryPage } from "./InventoryPage";
 import { SchedulesPage } from "./SchedulesPage";
@@ -31,6 +32,11 @@ export const ownerPages = {
     description: "Make room for a well-planned baking day.",
     detail: "",
   },
+  ai: {
+    title: "AI activity",
+    description: "Every assistant request, with its retries and result.",
+    detail: "",
+  },
 };
 export type OwnerPageName = keyof typeof ownerPages;
 
@@ -38,6 +44,7 @@ export function OwnerPage({ page, session }: { page: OwnerPageName; session: Ses
   if (page === "finance") return <FinancePage />;
   if (page === "inventory") return <InventoryPage session={session} />;
   if (page === "schedules") return <SchedulesPage session={session} />;
+  if (page === "ai") return <AIActivityPage />;
   const content = ownerPages[page];
   return (
     <>

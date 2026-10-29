@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from collections.abc import Callable
+import time
 from typing import Any
 
 from enum import Enum
@@ -16,7 +17,9 @@ from enum import Enum
 from pydantic import ValidationError
 
 from app.llm.gateway import LLMCallFailed
+from app.shared.records import AIRequestStatus
 from app.shared.refs import RecordRef
+from app.workflow.ai_requests import Recording
 
 
 class OrderStage(str, Enum):
@@ -127,6 +130,7 @@ class WorkflowService:
         actor: str,
         event_type: str,
         retry_on: tuple[type[Exception], ...] = RETRY_ON,
+        prompt_version: str | None = None,
     ) -> Any:
         """Run one AI operation, retrying until usable or the budget runs out.
 
@@ -137,16 +141,30 @@ class WorkflowService:
         [BAKE-41] Only the exceptions in ``retry_on`` are retried. An unusable
         AI reply deserves another attempt; a defect in our own code does not,
         and must never reach the owner reported as an AI failure.
+
+        [BAKE-37] Inside a request, the operation and each attempt are saved
+        in ``ai_requests`` [R5] (see ``app.workflow.ai_requests``).
         """
-        for _ in range(MAX_ATTEMPTS):
-            try:
-                result = attempt_task()
-            except retry_on:
-                continue
-            if is_usable(result):
-                return result
+        recording = Recording(subject, event_type, actor=actor, prompt_version=prompt_version)
+        try:
+            for _ in range(MAX_ATTEMPTS):
+                began = time.perf_counter()
+                try:
+                    result = attempt_task()
+                except retry_on as exc:
+                    recording.attempt(began, error=exc)
+                    continue
+                usable = is_usable(result)
+                recording.attempt(began, usable=usable)
+                if usable:
+                    recording.finish(AIRequestStatus.SUCCEEDED)
+                    return result
+        except BaseException as exc:
+            recording.finish(AIRequestStatus.INTERRUPTED, error=exc)
+            raise
 
         self._record(subject, actor, f"{event_type}Failed", stage, stage)
+        recording.finish(AIRequestStatus.FAILED)
         raise AIOperationFailed(MAX_ATTEMPTS)
 
     def _record(

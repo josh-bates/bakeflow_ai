@@ -28,6 +28,23 @@ export type StockItem = {
   committed: string;
   available: string;
 };
+/** One saved AI operation (BAKE-37, architecture [R5]); it holds no prompt or reply text. */
+export type AIRequestRecord = {
+  id: string;
+  task: string;
+  subject: { recordType: string; recordId: string; version: number };
+  actor: string;
+  provider: string;
+  model: string;
+  promptVersion: string | null;
+  status: "Running" | "Succeeded" | "Failed" | "Interrupted";
+  attempts: number;
+  latencyMs: number | null;
+  lastError: string | null;
+  outcome: { attempt: number; latencyMs: number; result: "usable" | "rejected" | "error"; error?: string }[];
+  startedAt: string;
+  finishedAt: string | null;
+};
 export type ReceiptSource = "Invoice" | "DeliveryNote";
 export type ReceiptInput = {
   itemId: string;
@@ -187,6 +204,20 @@ function schedule(value: unknown): boolean {
     (value.notice === null || typeof value.notice === "string") &&
     scheduleVersion(value.latest) &&
     (value.released === null || scheduleVersion(value.released))
+  );
+}
+function aiRequest(r: unknown): boolean {
+  return (
+    record(r) &&
+    ["id", "task", "actor", "provider", "model", "startedAt"].every((k) => typeof r[k] === "string") &&
+    ["Running", "Succeeded", "Failed", "Interrupted"].includes(String(r.status)) &&
+    record(r.subject) &&
+    typeof r.subject.recordType === "string" &&
+    Number.isInteger(r.attempts) &&
+    (r.latencyMs === null || Number.isInteger(r.latencyMs)) &&
+    [r.promptVersion, r.lastError, r.finishedAt].every((v) => v === null || typeof v === "string") &&
+    Array.isArray(r.outcome) &&
+    r.outcome.every((a) => record(a) && Number.isInteger(a.attempt) && typeof a.result === "string")
   );
 }
 const JSON_POST = (csrfToken: string, body: unknown): RequestInit => ({
@@ -358,6 +389,12 @@ export const api = {
     )
       return invalid();
     return value.items as StockItem[];
+  },
+  /** BAKE-37: the latest saved AI operations, newest first. */
+  async aiRequests(): Promise<AIRequestRecord[]> {
+    const value = await request("/owner/ai-requests");
+    if (!record(value) || !Array.isArray(value.requests) || !value.requests.every(aiRequest)) return invalid();
+    return value.requests as AIRequestRecord[];
   },
   /** Records a delivered ingredient; repeating the same receipt never raises stock twice. */
   async receiveStock(receipt: ReceiptInput, csrfToken: string): Promise<StockReceipt> {

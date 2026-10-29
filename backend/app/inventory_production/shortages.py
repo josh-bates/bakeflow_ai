@@ -20,10 +20,10 @@ number is said of.
 ``WorkflowService.run_ai_task`` owns the budget: an unreadable reply or one
 that fails the check is retried at most twice. If none is usable, the owner
 gets the same list with ``UNAVAILABLE_NOTICE`` (UC-03 6a), and the failure is
-in the workflow audit log. A list with no shortage (UC-03 4a) needs no
-explanation, so the agent is not called. A list for an older order version is
-refused before and after the agent runs, whether or not it gave an
-explanation [R10].
+in the workflow audit log and in ``ai_requests`` [R5]. A list with no
+shortage (UC-03 4a) needs no explanation, so the agent is not called. A list
+for an older order version is refused before and after the agent runs,
+whether or not it gave an explanation [R10].
 """
 
 from __future__ import annotations
@@ -158,7 +158,8 @@ class ShortageExplainer(WorkflowService):
 
         try:
             explanation = self.run_ai_task(
-                list_ref, stage, attempt, usable, actor=str(actor_id), event_type=EVENT_TYPE
+                list_ref, stage, attempt, usable, actor=str(actor_id), event_type=EVENT_TYPE,
+                prompt_version=PROMPT_VERSION,
             )
         except AIOperationFailed:
             _log.warning("No usable explanation for shopping list %s: %s", list_id, "; ".join(problems))
