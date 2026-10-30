@@ -42,3 +42,11 @@ Implements UC-05 step 4 and flow 4a (AR-03). The Pricing and Bookkeeping Agent e
   - 3 inconsistent replies end in manual review with an audit entry;
   - timeouts and malformed JSON count as attempts.
 - **Figures:** they are identical with or without an explanation, and calculation flags still require review.
+
+## Wired into the quote pages (after #19 and #38)
+
+`quote_routes.py` passes `explain=` to `QuoteService.draft` and `revise`. It wraps `QuoteExplainer` in the `(calculation, units) -> ExplanationOutcome` shape that BAKE-23 calls, outside any transaction.
+
+- **Models:** Mock mode uses `fixtures.mock_explainer`, and Live mode uses `LLMGateway`. With no provider configured, every attempt fails and the quote is saved for manual review (4a).
+- **AI request subject:** the order at its current version when pricing, or the quote version being revised.
+- **Tests:** a PostgreSQL route test shows Mock mode explaining the 94.23 quote, and an always-malformed client leaving the figures flagged for manual review.

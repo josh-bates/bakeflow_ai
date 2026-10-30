@@ -67,9 +67,9 @@ def test_owner_approves_and_customer_accepts(app, store, seeded):
         drafted = client.post(f"/api/finance/orders/{order_id}/quotes", json={}, headers=owner)
         assert drafted.status_code == 201, drafted.text
         quote = drafted.json()
-        # No explainer is wired in yet, so the quote is flagged for review (4a).
+        # BAKE-22's explainer (Mock mode) explains the calculated figures.
         assert (quote["total"], quote["version"]) == ("94.23", 1)
-        assert (quote["explanation"], quote["requiresManualReview"]) == (None, True)
+        assert "$94.23" in quote["explanation"] and quote["requiresManualReview"] is False
         assert queued(client, order_id)["approval"] == "Pending"
         base = f"/api/finance/quotes/{quote['id']}/versions/1"
 
@@ -167,3 +167,24 @@ def test_each_side_only_reaches_its_own_routes(app, store, seeded):
         assert client.post(f"/api/quotes/{quote['id']}/versions/1/accept",
                            headers=other).status_code == 404
     assert status_of(store, order_id) == OrderStatus.QUOTED
+
+
+def test_a_failed_explanation_still_saves_the_quote_for_manual_review(database_url, store, seeded):
+    """UC-05 4a: three unusable explanations leave the figures, flagged for review."""
+    from fastapi import FastAPI
+
+    from app.auth.access import Identity, require_owner
+    from app.llm.gateway import MockLLMClient
+    from app.pricing_bookkeeping.quote_routes import make_router
+
+    order_id = priced_order(store, seeded)
+    app = FastAPI()
+    app.include_router(make_router(Settings(_env_file=None), store=store,
+                                   client_factory=lambda calc, units: MockLLMClient(default_reply="not json")))
+    app.dependency_overrides[require_owner] = lambda: Identity(seeded.owner_id, "Owner", "Owner", None)
+
+    drafted = TestClient(app).post(f"/api/finance/orders/{order_id}/quotes")
+
+    assert drafted.status_code == 201, drafted.text
+    quote = drafted.json()
+    assert (quote["total"], quote["explanation"], quote["requiresManualReview"]) == ("94.23", None, True)
