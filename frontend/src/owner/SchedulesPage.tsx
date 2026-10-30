@@ -11,6 +11,7 @@ import {
   type TaskProgress,
 } from "../api/client";
 import { AiMark } from "../components/AiMark";
+import { readableAmount } from "../format";
 import { Notice } from "../components/Notice";
 
 // UC-04 (BAKE-20, BAKE-21): the owner asks for a production plan, reviews its
@@ -81,7 +82,7 @@ function progressMessage(result: TaskProgress, task: Task): Message {
       text: result.replayed
         ? `Order ${order} was already complete. Nothing was deducted again:`
         : `Order ${order} is complete. Its ingredients were deducted once:`,
-      items: d.lines.map((l) => `${l.ingredient}: ${l.quantity} ${l.unit} used, ${l.onHand} ${l.unit} on hand now`),
+      items: d.lines.map((l) => `${l.ingredient}: ${readableAmount(l.quantity, l.unit)} used, ${readableAmount(l.onHand, l.unit)} on hand now`),
     };
   const done = result.status === "Completed" ? "is done" : "has started";
   return { error: false, text: `The ${task.kind} task for order ${order} ${done}.`, items: [] };

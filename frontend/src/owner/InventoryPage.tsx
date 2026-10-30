@@ -10,11 +10,12 @@ import {
 } from "../api/client";
 import { AiMark } from "../components/AiMark";
 import { Notice } from "../components/Notice";
+import { readableAmount, readableQuantity } from "../format";
 
 // UC-03 7a (BAKE-32): the owner records delivered ingredients from an invoice
 // or delivery note. Stock changes only on the server, once per receipt; every
-// quantity comes from the server as a decimal string and stays one: messages show
-// it as given, labels and the stock table only tidy how it reads.
+// quantity comes from the server as a decimal string and stays one; only the
+// reorder-level box shows it untouched, so it can be edited as stored.
 // BAKE-37 [O1]: ingredients below their reorder level are listed with the
 // server's suggested reorder; the owner sets reorder levels and may ask the
 // assistant to explain the alerts. Nothing is ordered for the owner.
@@ -23,24 +24,13 @@ const SOURCES: Record<ReceiptSource, string> = { Invoice: "Invoice", DeliveryNot
 // What the server stores exactly: up to nine digits and three decimals.
 const QUANTITY = /^\d{1,9}(\.\d{1,3})?$/;
 
-const amount = (value: string, unit: string) =>
-  `${value.startsWith("-") ? `−${value.slice(1)}` : value} ${unit}`;
-// 3500.000 reads as 3,500 and 12.500 as 12.5. Works on the text, so no digit is ever rounded.
-export function readableQuantity(value: string): string {
-  const unsigned = value.replace(/^-/, "");
-  const [whole, decimals = ""] = unsigned.split(".");
-  const fraction = decimals.replace(/0+$/, "");
-  const sign = value.startsWith("-") && /[1-9]/.test(unsigned) ? "−" : "";
-  return `${sign}${whole.replace(/\B(?=(\d{3})+$)/g, ",")}${fraction && `.${fraction}`}`;
-}
-const readableAmount = (value: string, unit: string) => `${readableQuantity(value)} ${unit}`;
 const failure = (err: unknown, fallback: string) => (err instanceof ApiError ? err.message : fallback);
 
 function receiptMessage(r: StockReceipt): string {
   const source = `${SOURCES[r.sourceType]} ${r.sourceReference}`;
   if (r.replayed)
-    return `${source} was already recorded for ${r.ingredient} (${amount(r.quantity, r.unit)}). Stock was not raised again.`;
-  return `Recorded ${amount(r.quantity, r.unit)} of ${r.ingredient} from ${source}. ${r.ingredient} on hand is now ${amount(r.onHand, r.unit)}.`;
+    return `${source} was already recorded for ${r.ingredient} (${readableAmount(r.quantity, r.unit)}). Stock was not raised again.`;
+  return `Recorded ${readableAmount(r.quantity, r.unit)} of ${r.ingredient} from ${source}. ${r.ingredient} on hand is now ${readableAmount(r.onHand, r.unit)}.`;
 }
 
 export function InventoryPage({ session }: { session: Session }) {
@@ -93,7 +83,7 @@ export function InventoryPage({ session }: { session: Session }) {
       const saved = await api.setReorderLevel(i.id, level, i.version, session.csrfToken);
       setLevels(({ [i.id]: _saved, ...rest }) => rest);
       setExplanation(null);
-      setMessage(`${saved.ingredient} reorder level is now ${amount(saved.reorderLevel, saved.unit)}.`);
+      setMessage(`${saved.ingredient} reorder level is now ${readableAmount(saved.reorderLevel, saved.unit)}.`);
     }, "The reorder level could not be saved. Nothing was changed.");
 
   const explain = () =>
@@ -386,9 +376,9 @@ function LowStock({
                   {items.map((i) => (
                     <tr key={i.id}>
                       <th scope="row">{i.ingredient}</th>
-                      <td>{amount(i.available, i.unit)}</td>
-                      <td>{amount(i.reorderLevel, i.unit)}</td>
-                      <td className="reorder">{i.suggestedReorder && amount(i.suggestedReorder, i.unit)}</td>
+                      <td>{readableAmount(i.available, i.unit)}</td>
+                      <td>{readableAmount(i.reorderLevel, i.unit)}</td>
+                      <td className="reorder">{i.suggestedReorder && readableAmount(i.suggestedReorder, i.unit)}</td>
                     </tr>
                   ))}
                 </tbody>

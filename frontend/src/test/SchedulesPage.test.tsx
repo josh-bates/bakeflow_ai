@@ -131,7 +131,7 @@ it("marks the order's last task done and shows the stock deducted once", async (
 
   const status = await screen.findByText(/^Order 0a1b2c3d is complete\. Its ingredients were deducted once:/);
   expect(status).toHaveAttribute("role", "status");
-  expect(status).toHaveTextContent("Flour: 600.000 g used, 400.000 g on hand now");
+  expect(status).toHaveTextContent("Flour: 600 g used, 400 g on hand now");
   const [url, init] = fetchMock.mock.calls.find(([u]) => String(u).includes("/tasks/"))!;
   expect(url).toBe(`/api/schedules/${ID}/tasks/${encodeURIComponent(finish.id)}/progress`);
   expect(JSON.parse(init.body)).toEqual({ status: "Completed" });
