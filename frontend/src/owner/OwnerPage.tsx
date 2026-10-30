@@ -35,7 +35,7 @@ export const ownerPages = {
 export type OwnerPageName = keyof typeof ownerPages;
 
 export function OwnerPage({ page, session }: { page: OwnerPageName; session: Session }) {
-  if (page === "finance") return <FinancePage />;
+  if (page === "finance") return <FinancePage session={session} />;
   if (page === "inventory") return <InventoryPage session={session} />;
   if (page === "schedules") return <SchedulesPage session={session} />;
   const content = ownerPages[page];

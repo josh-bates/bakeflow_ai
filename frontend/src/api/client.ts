@@ -52,6 +52,7 @@ export type ProfitLine = {
   margin: string | null;
   transactions: number;
 };
+export type ExplainedProfitability = Profitability & { explanation: string | null; notice: string | null };
 export type Profitability = {
   overall: ProfitLine;
   general: ProfitLine;
@@ -189,6 +190,21 @@ function schedule(value: unknown): boolean {
     (value.released === null || scheduleVersion(value.released))
   );
 }
+function validProfitability(value: unknown): Profitability {
+  if (
+    !record(value) ||
+    !profitLine(value.overall) ||
+    !profitLine(value.general) ||
+    !Array.isArray(value.byOrder) ||
+    !value.byOrder.every((o) => profitLine(o) && record(o) && typeof o.orderId === "string") ||
+    !Array.isArray(value.byProduct) ||
+    !value.byProduct.every(
+      (p) => profitLine(p) && record(p) && typeof p.productId === "string" && typeof p.name === "string",
+    )
+  )
+    return invalid();
+  return value as Profitability;
+}
 const JSON_POST = (csrfToken: string, body: unknown): RequestInit => ({
   method: "POST",
   headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
@@ -287,20 +303,19 @@ export const api = {
     return value as Submission;
   },
   async profitability(): Promise<Profitability> {
-    const value = await request("/finance/profitability");
+    return validProfitability(await request("/finance/profitability"));
+  },
+  /** UC-06 steps 5-7 (BAKE-34): the same figures, explained when the explanation passes its check. */
+  async explainProfitability(csrfToken: string): Promise<ExplainedProfitability> {
+    const value = await request("/finance/profitability/explanation", JSON_POST(csrfToken, {}));
+    const figures = validProfitability(value);
     if (
       !record(value) ||
-      !profitLine(value.overall) ||
-      !profitLine(value.general) ||
-      !Array.isArray(value.byOrder) ||
-      !value.byOrder.every((o) => profitLine(o) && record(o) && typeof o.orderId === "string") ||
-      !Array.isArray(value.byProduct) ||
-      !value.byProduct.every(
-        (p) => profitLine(p) && record(p) && typeof p.productId === "string" && typeof p.name === "string",
-      )
+      !(value.explanation === null || typeof value.explanation === "string") ||
+      !(value.notice === null || typeof value.notice === "string")
     )
       return invalid();
-    return value as Profitability;
+    return { ...figures, explanation: value.explanation as string | null, notice: value.notice as string | null };
   },
   async schedules(): Promise<Schedules> {
     const value = await request("/schedules");
