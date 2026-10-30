@@ -1,7 +1,8 @@
 """Inventory and Production module (AR-02, IP-01–IP-05: UC-03, UC-04).
 
 Home of ``InventoryProductionAgent``, ``InventoryService`` and
-``ProductionService`` (architecture §6.1), and the schedule release (BAKE-21).
+``ProductionService`` (architecture §6.1), the schedule release (BAKE-21) and
+task progress with its once-only deduction (BAKE-33).
 """
 
 from app.inventory_production.inventory import (
@@ -23,6 +24,13 @@ from app.inventory_production.production import (
     ProductionService,
     Violation,
     ViolationKind,
+)
+from app.inventory_production.progress import (
+    Deduction,
+    DeductedLine,
+    ProgressOutcome,
+    ProgressRefused,
+    TaskProgress,
 )
 from app.inventory_production.release import (
     ReleaseOutcome,
@@ -49,6 +57,8 @@ from app.inventory_production.shortages import (
 )
 
 __all__ = [
+    "DeductedLine",
+    "Deduction",
     "ExcludedOrder",
     "ExplanationOutcome",
     "ExplanationStatus",
@@ -64,6 +74,8 @@ __all__ = [
     "ProblemKind",
     "ProductionPlanner",
     "ProductionService",
+    "ProgressOutcome",
+    "ProgressRefused",
     "ReceiptConflict",
     "ReceiptInput",
     "ReceiptRejected",
@@ -79,6 +91,7 @@ __all__ = [
     "StockCheckResult",
     "StockLevel",
     "StockReceipt",
+    "TaskProgress",
     "Violation",
     "ViolationKind",
     "check_explanation",

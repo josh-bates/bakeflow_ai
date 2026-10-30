@@ -600,7 +600,7 @@ def validate_receipt(receipt: ReceiptInput) -> tuple[ReceiptIssue, ...]:
         issues.append(ReceiptIssue("item_id", "must be a UUID"))
     quantity = receipt.quantity
     if not isinstance(quantity, Decimal):
-        issues.append(ReceiptIssue("quantity", "must be a Decimal, not a float or other type"))
+        issues.append(ReceiptIssue("quantity", "must be a number, such as 2500 or 2.5"))
     elif not quantity.is_finite():
         issues.append(ReceiptIssue("quantity", "must be a finite number"))
     elif quantity <= 0:
