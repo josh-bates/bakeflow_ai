@@ -209,12 +209,13 @@ it("blocks a customer from rendering an owner route", async () => {
 
 it("lets an owner navigate the clearly labelled placeholder pages", async () => {
   const user = userEvent.setup();
-  fetchMock.mockResolvedValue(response(session("Owner")));
+  fetchMock.mockImplementation(async (url: string) =>
+    url === "/api/session" ? response(session("Owner")) : response({ orders: [] }),
+  );
   render(<App />);
   await screen.findByRole("heading", { name: "Pending approvals" });
   for (const title of [
     "Orders",
-    "Pending approvals",
   ]) {
     await user.click(screen.getByRole("link", { name: title }));
     expect(
@@ -222,7 +223,8 @@ it("lets an owner navigate the clearly labelled placeholder pages", async () => 
     ).toBeInTheDocument();
     expect(screen.getByText(/This page is a placeholder/)).toBeInTheDocument();
   }
-  expect(fetchMock).toHaveBeenCalledTimes(1);
+  // The session, then the quote queue on Pending approvals (BAKE-23).
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
 it("rejects a malformed successful response rather than showing fabricated orders", async () => {
