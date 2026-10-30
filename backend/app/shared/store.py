@@ -28,7 +28,9 @@ Rules the store enforces:
   schedule version) cannot change at all once saved.
 
 Writes that change stock or capacity use ``store.constraint_guard()`` instead
-of ``unit_of_work()``, so they lock the shared guard row first [R1].
+of ``unit_of_work()``, so they lock the shared guard row first [R1]. A read
+that combines several queries into one figure (stock on hand less what plans
+commit) uses ``store.snapshot()``, so every query sees the same state.
 
 Errors carry the stable codes from architecture §6.2: ``STALE_VERSION`` and
 ``VALIDATION_FAILED``.
@@ -137,6 +139,22 @@ class ValidatedRecordStore:
                 raise RuntimeError(
                     f"constraint_guard row {bakery_id} is missing; run the database migrations"
                 )
+            yield session
+
+    @contextmanager
+    def snapshot(self) -> Iterator[Session]:
+        """Read-only unit of work whose queries all see one database state.
+
+        PostgreSQL ``REPEATABLE READ``: every query sees what was committed
+        before the first one, so a guarded write committed between two reads
+        (a deduction that lowers stock and completes its order) cannot pair
+        old rows with new ones. It takes no locks and never waits for a
+        writer. The database refuses any write inside it.
+        """
+        with self.unit_of_work() as session:
+            session.connection(
+                execution_options={"isolation_level": "REPEATABLE READ", "postgresql_readonly": True}
+            )
             yield session
 
     def commit(
