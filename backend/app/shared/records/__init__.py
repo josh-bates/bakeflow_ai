@@ -20,7 +20,12 @@ from app.shared.records.approvals import ApprovalRequest
 from app.shared.records.audit import AuditEntry, ConstraintGuard
 from app.shared.records.catalogue import InventoryItem, Product, Recipe, RecipeIngredient
 from app.shared.records.finance import Quote, Transaction
-from app.shared.records.marketing import Campaign, CampaignProduct, MarketingContent
+from app.shared.records.marketing import (
+    Campaign,
+    CampaignProduct,
+    MockPublication,
+    MarketingContent,
+)
 from app.shared.records.orders import Order, OrderItem
 from app.shared.records.production import (
     ProductionSchedule,
@@ -38,6 +43,7 @@ __all__ = [
     "Campaign",
     "CampaignProduct",
     "ConstraintGuard",
+    "MockPublication",
     "Customer",
     "CustomerDecision",
     "InventoryItem",
