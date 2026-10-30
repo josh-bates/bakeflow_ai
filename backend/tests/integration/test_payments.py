@@ -293,9 +293,47 @@ def test_a_cancelled_order_is_not_charged_by_an_open_payment(store, seeded, paym
         store.commit(session, order, actor_id=seeded.owner_id, action="order.cancelled",
                      expected_version=order.version)
 
+    settled = payments.complete(callback(payment))
+
+    # Settled as Failed (review of #34): closed, with the reason, and no income.
+    assert (settled.status, settled.transaction_id) == (PaymentStatus.FAILED, None)
+    assert "Cancelled" in settled.reason
+    assert stored_payment(store, payment.payment_id).status == PaymentStatus.FAILED
+    assert count(store, Transaction) == 0
+
+
+def test_a_withdrawn_approval_after_start_records_no_income(store, seeded, payments):
+    order_id = confirmed_order(store, seeded)
+    payment = payments.start(order_id, customer_id=seeded.customer_id)
+    with store.unit_of_work() as session:
+        ApprovalService(store).invalidate(
+            session, payment.quote, ApprovalKind.QUOTATION, "test", actor_id=seeded.owner_id
+        )
+
+    settled = payments.complete(callback(payment))
+
+    assert (settled.status, settled.transaction_id) == (PaymentStatus.FAILED, None)
+    assert "approved" in settled.reason
+    assert count(store, Transaction) == 0
     with pytest.raises(PaymentError) as refused:
-        payments.complete(callback(payment))
-    assert refused.value.code == "CONFLICT"
+        payments.start(order_id, customer_id=seeded.customer_id)
+    assert refused.value.code == "APPROVAL_REQUIRED"
+
+
+def test_a_newer_quote_version_after_start_records_no_income(store, seeded, payments):
+    order_id = confirmed_order(store, seeded)
+    payment = payments.start(order_id, customer_id=seeded.customer_id)
+    with store.unit_of_work() as session:
+        accepted = store.load(session, Quote, payment.quote.record_id)
+        newer = Quote(**{c: getattr(accepted, c) for c in (
+            "quote_id", "order_id", "source_order_version", "material_cost", "labour_cost",
+            "packaging_cost", "additional_cost", "target_margin", "total")})
+        store.commit(session, newer, actor_id=seeded.owner_id, action="quote.revised",
+                     expected_version=accepted.version)
+
+    settled = payments.complete(callback(payment))
+
+    assert (settled.status, settled.transaction_id) == (PaymentStatus.FAILED, None)
     assert count(store, Transaction) == 0
 
 
