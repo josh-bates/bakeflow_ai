@@ -27,6 +27,8 @@ ALLOWED = [
     (OrderStage.SCHEDULED, OrderStage.IN_PRODUCTION),
     # [BAKE-41] A scheduled order can still be cancelled.
     (OrderStage.SCHEDULED, OrderStage.CANCELLED),
+    # [BAKE-21] A released revision can leave it out.
+    (OrderStage.SCHEDULED, OrderStage.CONFIRMED),
     (OrderStage.IN_PRODUCTION, OrderStage.COMPLETED),
 ]
 

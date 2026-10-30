@@ -38,8 +38,12 @@ CORE_TABLES = {
 }
 
 
+# Stage 2 extension tables added by later stories (architecture §5.3).
+EXTENSION_TABLES = {"inventory_receipts"}
+
+
 def test_metadata_has_stage1_core_tables_and_session_infrastructure():
-    assert set(Base.metadata.tables) == CORE_TABLES | {"auth_sessions"}
+    assert set(Base.metadata.tables) == CORE_TABLES | EXTENSION_TABLES | {"auth_sessions"}
 
 
 def test_record_ref_round_trips_through_the_wire_shape():
