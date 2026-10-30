@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
-import pytest
 from sqlalchemy import select
 
 from app.llm.gateway import MockLLMClient
