@@ -10,12 +10,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.config import Settings
 from app.inventory_production import InventoryService
 from app.main import create_app
+from app.pricing_bookkeeping.agent import PROMPT_VERSION
 from app.shared.passwords import hash_password
-from app.shared.records import Customer, Order, OrderItem, OrderStatus, UserAccount
+from app.shared.records import AIRequest, Customer, Order, OrderItem, OrderStatus, UserAccount
 
 REQUIRED_AT = datetime.now(UTC) + timedelta(days=14)
 
@@ -70,6 +72,10 @@ def test_owner_approves_and_customer_accepts(app, store, seeded):
         # BAKE-22's explainer (Mock mode) explains the calculated figures.
         assert (quote["total"], quote["version"]) == ("94.23", 1)
         assert "$94.23" in quote["explanation"] and quote["requiresManualReview"] is False
+        with store.unit_of_work() as session:
+            explained = session.scalars(select(AIRequest)).one()
+        assert (explained.task_kind, explained.status, explained.prompt_version) == (
+            "QuoteExplanation", "Succeeded", PROMPT_VERSION)
         assert queued(client, order_id)["approval"] == "Pending"
         base = f"/api/finance/quotes/{quote['id']}/versions/1"
 

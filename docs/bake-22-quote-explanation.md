@@ -49,4 +49,5 @@ Implements UC-05 step 4 and flow 4a (AR-03). The Pricing and Bookkeeping Agent e
 
 - **Models:** Mock mode uses `fixtures.mock_explainer`, and Live mode uses `LLMGateway`. With no provider configured, every attempt fails and the quote is saved for manual review (4a).
 - **AI request subject:** the order at its current version when pricing, or the quote version being revised.
-- **Tests:** a PostgreSQL route test shows Mock mode explaining the 94.23 quote, and an always-malformed client leaving the figures flagged for manual review.
+- **AI request log (BAKE-37):** each explanation is saved to `ai_requests` as `QuoteExplanation` with `prompt_version` `quote-explanation-v1`, so it shows on the AI activity page.
+- **Tests:** a PostgreSQL route test shows Mock mode explaining the 94.23 quote and recording the prompt version, and an always-malformed client leaving the figures flagged for manual review.
