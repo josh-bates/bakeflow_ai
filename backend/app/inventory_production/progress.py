@@ -160,6 +160,9 @@ class TaskProgress:
         status: TaskStatus,
     ) -> None:
         """Refuse a change that the effective version, a pending revision or the order rules out."""
+        from app.sales.changes import pending_change
+        if pending_change(session, order.order_id):
+            raise ProgressRefused("This order has a pending change or refund review; affected work is paused.")
         if task.status not in _FROM[status]:
             raise ProgressRefused(f"This task is already {task.status.lower()}.")
         self._check_version(schedule, task)

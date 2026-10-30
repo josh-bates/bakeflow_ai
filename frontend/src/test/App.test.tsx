@@ -21,7 +21,8 @@ beforeEach(() => {
     .mockImplementation(async (url: string) =>
       url === "/api/session" ? response(session()) : response({ orders: [] }),
     );
-  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => ["/api/order-changes", "/api/owner/order-changes"].includes(url)
+    ? Promise.resolve(response({ requests: [] })) : fetchMock(url, init));
 });
 
 it("loads only the signed-in customer’s orders and never supplies a customer identity", async () => {
@@ -207,7 +208,7 @@ it("blocks a customer from rendering an owner route", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-it("lets an owner navigate the clearly labelled placeholder pages", async () => {
+it("lets an owner navigate live order reviews and remaining placeholder pages", async () => {
   const user = userEvent.setup();
   fetchMock.mockResolvedValue(response(session("Owner")));
   render(<App />);
@@ -220,7 +221,8 @@ it("lets an owner navigate the clearly labelled placeholder pages", async () => 
     expect(
       await screen.findByRole("heading", { name: title }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/This page is a placeholder/)).toBeInTheDocument();
+    if (title === "Orders") expect(screen.getByRole("heading", { name: "Order change reviews" })).toBeInTheDocument();
+    else expect(screen.getByText(/This page is a placeholder/)).toBeInTheDocument();
   }
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });

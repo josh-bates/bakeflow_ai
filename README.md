@@ -202,3 +202,7 @@ Customers can read only their own orders; owner operations require an owner
 session. Sign out revokes the session. See [BAKE-14 setup and API contract](docs/bake-14-auth.md)
 for CSRF headers, shared permission dependencies and the optional local launcher.
 Deployment requires HTTPS; local development may use loopback HTTP.
+
+### Customer order changes and cancellation (BAKE-30)
+
+Use **Adjust an order** to preview a quantity/time change, cancellation or refund review. Confirm before anything is saved. Confirmed sales keep their original terms until the owner approves a revised quotation and the customer accepts it; the owner's **Orders** page contains these requests. Started work and refunds require owner review, and cancellation never refunds money or reverses recorded consumption. See [supported requests, design refinements and demo steps](docs/bake30-order-changes.md).

@@ -1,3 +1,4 @@
+import { OrderChangeReviews } from "./OrderChangeReviews";
 import type { Session } from "../api/client";
 import { FinancePage } from "./FinancePage";
 import { InventoryPage } from "./InventoryPage";
@@ -47,7 +48,8 @@ export function OwnerPage({ page, session }: { page: OwnerPageName; session: Ses
         <h1>{content.title}</h1>
         <p>{content.description}</p>
       </section>
-      <section className="card placeholder">
+      {page === "orders" && <OrderChangeReviews session={session} />}
+      {page !== "orders" && <section className="card placeholder">
         <span className="stamp" aria-hidden="true">
           ◇
         </span>
@@ -58,7 +60,7 @@ export function OwnerPage({ page, session }: { page: OwnerPageName; session: Ses
           This page is a placeholder. No live records or actions are available
           here yet.
         </div>
-      </section>
+      </section>}
     </>
   );
 }

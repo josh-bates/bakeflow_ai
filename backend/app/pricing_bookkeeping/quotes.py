@@ -288,6 +288,9 @@ class QuoteService:
     def _price(
         self, session: Session, order: Order, additional_costs: tuple[AdditionalCost, ...]
     ) -> _Priced:
+        from app.sales.changes import pending_change
+        if pending_change(session, order.order_id):
+            raise QuoteError("CONFLICT", "Resolve the pending order amendment before quoting these terms.")
         if order.status not in _PRICEABLE:
             raise QuoteError("CONFLICT", f"an order that is {order.status} cannot be priced")
         inputs = costing_inputs(session, order, additional_costs)
@@ -327,6 +330,9 @@ class QuoteService:
     def _current_for_owner(self, session: Session, quote: RecordRef) -> tuple[Quote, Order]:
         order = self._order(session, self._latest(session, quote.record_id).order_id, lock=True)
         current = self._latest(session, quote.record_id, fresh=True)
+        from app.sales.changes import pending_change
+        if pending_change(session, order.order_id):
+            raise QuoteError("CONFLICT", "Resolve the pending order amendment before quoting these terms.")
         if order.status not in _PRICEABLE:
             # A cancelled or already confirmed order takes no new decision.
             raise QuoteError("CONFLICT", f"an order that is {order.status} cannot be quoted")
@@ -360,6 +366,9 @@ class QuoteService:
 
     def _presentable(self, session: Session, quote: Quote, order: Order) -> bool:
         ref = RecordRef("Quote", quote.quote_id, quote.version)
+        from app.sales.changes import pending_change
+        if pending_change(session, order.order_id):
+            return False
         if order.status == OrderStatus.CANCELLED:
             return False
         return quote.source_order_version == order.version and self.approvals.is_approved(

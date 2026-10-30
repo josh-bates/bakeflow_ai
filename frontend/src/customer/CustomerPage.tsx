@@ -8,6 +8,7 @@ import {
   type Submission,
   type DraftReceipt,
 } from "../api/client";
+import { OrderChanges } from "./OrderChanges";
 import { Notice } from "../components/Notice";
 
 export function CustomerPage({
@@ -336,6 +337,7 @@ export function CustomerPage({
           </div>
         )}
       </section>
+      <OrderChanges orders={orders} session={session} onExpired={onExpired} onChanged={() => setReload(n => n + 1)} />
     </>
   );
 }

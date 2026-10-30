@@ -52,6 +52,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from app.pricing_bookkeeping.payment_routes import make_router as make_payment_router
     app.include_router(make_payment_router(settings))
 
+    from app.sales.change_routes import make_router as make_change_router
+    app.include_router(make_change_router(settings))
+
     # Registered last so that every /api route above takes precedence.
     _serve_frontend(app, settings.frontend_dist)
     return app
