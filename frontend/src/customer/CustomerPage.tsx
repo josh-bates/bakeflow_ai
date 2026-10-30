@@ -7,6 +7,7 @@ import {
   type Session,
   type Submission,
   type DraftReceipt,
+  type CustomerQuote,
 } from "../api/client";
 import { Notice } from "../components/Notice";
 
@@ -26,11 +27,19 @@ export function CustomerPage({
   const [loadError, setLoadError] = useState("");
   const [reload, setReload] = useState(0);
   const [message, setMessage] = useState("");
+  const [answers, setAnswers] = useState<string[]>([]);
+  const [answer, setAnswer] = useState("");
+  const [ended, setEnded] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Submission | null>(null);
   const [saved, setSaved] = useState<DraftReceipt | null>(null);
   const pending = useRef(false);
+  const [quote, setQuote] = useState<CustomerQuote | null>(null);
+  const [quoteOrder, setQuoteOrder] = useState("");
+  const [quoteBusy, setQuoteBusy] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+  const [quoteMessage, setQuoteMessage] = useState("");
   const attempt = useRef<{ message: string; key: string } | null>(null);
 
   useEffect(() => {
@@ -73,6 +82,43 @@ export function CustomerPage({
     }
   }
 
+  // UC-05 steps 7-9 (BAKE-23): the customer sees only the owner-approved,
+  // current quote and accepts or rejects exactly that version.
+  async function viewQuote(orderId: string) {
+    setQuote(null); setQuoteOrder(orderId); setQuoteError(""); setQuoteMessage(""); setQuoteBusy(true);
+    try {
+      const value = await api.customerQuote(orderId);
+      if (value) setQuote(value);
+      else setQuoteMessage("The bakery is still preparing your quote. Check back soon.");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onExpired();
+      else setQuoteError((e as Error).message);
+    } finally {
+      setQuoteBusy(false);
+    }
+  }
+
+  async function decide(accept: boolean) {
+    if (!quote || quoteBusy) return;
+    setQuoteBusy(true); setQuoteError("");
+    try {
+      if (accept) {
+        await api.acceptQuote(quote, session.csrfToken);
+        setQuoteMessage(`You accepted the quote of $${quote.total}. Your order is confirmed.`);
+      } else {
+        await api.rejectQuote(quote, session.csrfToken);
+        setQuoteMessage("You declined this quote. The bakery may send you a revised one.");
+      }
+      setQuote(null);
+      setReload(value => value + 1);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onExpired();
+      else setQuoteError(`${(e as Error).message} Your decision was not recorded.`);
+    } finally {
+      setQuoteBusy(false);
+    }
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (pending.current) return;
@@ -86,6 +132,9 @@ export function CustomerPage({
     setError("");
     setResult(null);
     setSaved(null);
+    setAnswers([]);
+    setAnswer("");
+    setEnded(false);
     // Reuse the key after an uncertain response so a retry cannot create a second intake.
     if (attempt.current?.message !== text)
       attempt.current = { message: text, key: crypto.randomUUID() };
@@ -103,6 +152,27 @@ export function CustomerPage({
         setError(
           `${(e as Error).message} No draft was saved. Your text has been kept so you can try again.`,
         );
+    } finally {
+      pending.current = false;
+      setSending(false);
+    }
+  }
+
+  async function clarify(event: React.FormEvent) {
+    event.preventDefault();
+    if (pending.current || !answer.trim() || answers.length >= 8) return;
+    pending.current = true;
+    setSending(true);
+    setError("");
+    const next = [...answers, answer.trim()];
+    try {
+      const response = await api.submit(message.trim(), session.csrfToken, crypto.randomUUID(), next);
+      setResult(response);
+      setAnswers(next);
+      setAnswer("");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onExpired();
+      else setError(`${(e as Error).message} No draft was saved. Your answer has been kept so you can retry.`);
     } finally {
       pending.current = false;
       setSending(false);
@@ -167,6 +237,9 @@ export function CustomerPage({
               disabled={sending}
               onChange={(e) => {
                 setMessage(e.target.value);
+                setAnswers([]);
+                setAnswer("");
+                setEnded(false);
                 setResult(null);
                 setSaved(null);
                 setError("");
@@ -178,6 +251,7 @@ export function CustomerPage({
               Review your summary before saving a draft. A draft is not a confirmed sale and no payment is taken.
             </p>
             {error && <Notice error>{error}</Notice>}
+            {ended && <Notice>Request ended. No draft was saved.</Notice>}
             {saved && <Notice><strong>Draft saved · {saved.orderId}</strong><br />Your requirements are saved. This is not a confirmed sale.</Notice>}
             <button className="primary" type="submit" disabled={sending}>
               {sending ? "Sending request…" : "Send order request"}{" "}
@@ -203,8 +277,22 @@ export function CustomerPage({
               </dl>
               <p className="field-help">Check the full date and year. If you omitted a year, the next occurrence is shown. No draft has been saved yet.</p>
               {result.issues.length > 0 && <Notice error><ul>{result.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></Notice>}
+              {result.issues.length > 0 && <section aria-labelledby="clarification-title">
+                <h3 id="clarification-title">A few details before we continue</h3>
+                <ul>{result.questions.map(question => <li key={question}>{question}</li>)}</ul>
+                {answers.length > 0 && <details><summary>Your previous answers</summary><ol>{answers.map((text, index) => <li key={index}>{text}</li>)}</ol></details>}
+                {answers.length < 8 ? <form onSubmit={clarify}>
+                  <label htmlFor="clarification-answer">Your answer or correction</label>
+                  <textarea id="clarification-answer" value={answer} maxLength={1000} required disabled={sending} onChange={e => setAnswer(e.target.value)} />
+                  <p className="field-help">Answer the questions above. We will review your full request again; nothing is saved until you confirm a complete summary.</p>
+                  <button className="primary" disabled={sending || !answer.trim()}>{sending ? "Reviewing your answer…" : "Update my summary"}</button>
+                </form> : <p>Please use “Correct my request” to write a complete revised request, or end here.</p>}
+                <button className="text-button" disabled={sending} onClick={() => {
+                  setResult(null); setMessage(""); setAnswers([]); setAnswer(""); setError(""); setEnded(true); attempt.current = null;
+                }}>End request without saving</button>
+              </section>}
               <div className="hero-actions">
-                <button className="secondary" disabled={sending} onClick={() => { setResult(null); setError(""); document.getElementById("order-request")?.focus(); }}>Correct my request</button>
+                <button className="secondary" disabled={sending} onClick={() => { setResult(null); setAnswers([]); setAnswer(""); setError(""); document.getElementById("order-request")?.focus(); }}>Correct my request</button>
                 <button className="primary" disabled={sending || !result.confirmationToken || result.issues.length > 0} onClick={confirm}>{sending ? "Saving draft…" : "Confirm and save draft"}</button>
               </div>
             </section>
@@ -238,6 +326,21 @@ export function CustomerPage({
             <button className="text-button" onClick={() => setTracking(null)}>Close status</button>
           </div>
         </section>}
+        {quoteOrder && (quoteBusy || quoteError || quoteMessage || quote) && <section className="order-summary" aria-labelledby="quote-title" aria-live="polite">
+          <h3 id="quote-title">Quote for order {quoteOrder.slice(0, 8)}</h3>
+          {quoteBusy && <Notice>Loading your quote…</Notice>}
+          {quoteError && <Notice error>{quoteError}</Notice>}
+          {quoteMessage && <Notice>{quoteMessage}</Notice>}
+          {quote && <>
+            <p><strong>Total price: ${quote.total} (AUD)</strong></p>
+            <p className="field-help">Quote version {quote.version}. Accepting confirms your order at this price. No payment is taken now.</p>
+            <div className="actions">
+              <button className="primary" disabled={quoteBusy} onClick={() => decide(true)}>Accept quote</button>
+              <button className="secondary" disabled={quoteBusy} onClick={() => decide(false)}>Decline quote</button>
+            </div>
+          </>}
+          <button className="text-button" onClick={() => { setQuoteOrder(""); setQuote(null); setQuoteMessage(""); setQuoteError(""); }}>Close quote</button>
+        </section>}
         {loading ? (
           <Notice>Loading your orders…</Notice>
         ) : loadError ? (
@@ -263,6 +366,7 @@ export function CustomerPage({
                   <th>Required time</th>
                   <th>Status</th>
                   <th>Tracking</th>
+                  <th>Quote</th>
                 </tr>
               </thead>
               <tbody>
@@ -283,6 +387,7 @@ export function CustomerPage({
                       <span className="badge">{order.status}</span>
                     </td>
                     <td><button className="secondary" aria-label={`Track order ${order.id}`} disabled={trackingBusy} onClick={() => track(order.id)}>Track order</button></td>
+                    <td>{order.status === "Quoted" ? <button className="primary" aria-label={`View quote for order ${order.id}`} disabled={quoteBusy} onClick={() => viewQuote(order.id)}>View quote</button> : <span className="muted">—</span>}</td>
                   </tr>
                 ))}
               </tbody>
