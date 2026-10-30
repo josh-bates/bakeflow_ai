@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 
@@ -53,6 +54,10 @@ class ContentStatus(StrEnum):
     DRAFTED = "Drafted"
     CAMPAIGN_NOT_APPROVED = "CampaignNotApproved"
     AI_UNAVAILABLE = "AIUnavailable"
+    SCHEDULED = "Scheduled"
+    NOT_APPROVED = "NotApproved"
+    NOT_READY = "NotReady"
+    NOT_IN_CALENDAR = "NotInCalendar"
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,15 @@ class ContentOutcome:
     status: ContentStatus
     content: RecordRef | None = None
     approval_request_id: uuid.UUID | None = None
+    problems: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ExportOutcome:
+    """The text the owner posts by hand, or why there is none."""
+
+    status: ContentStatus
+    text: str | None = None
     problems: tuple[str, ...] = ()
 
 
@@ -86,6 +100,7 @@ class ContentPlanner(WorkflowService):
         *,
         owner_id: uuid.UUID,
         platform: str = "Instagram",
+        scheduled_at: datetime | None = None,
         content_id: uuid.UUID | None = None,
     ) -> ContentOutcome:
         """Draft a post for an approved campaign and request its approval."""
@@ -141,15 +156,30 @@ class ContentPlanner(WorkflowService):
             )
 
         return self._save(
-            draft, campaign=campaign, platform=platform, owner_id=owner_id, content_id=content_id
+            draft,
+            campaign=campaign,
+            platform=platform,
+            owner_id=owner_id,
+            scheduled_at=scheduled_at,
+            content_id=content_id,
         )
 
     def revise(
-        self, content_id: uuid.UUID, campaign: RecordRef, *, owner_id: uuid.UUID, platform: str
+        self,
+        content_id: uuid.UUID,
+        campaign: RecordRef,
+        *,
+        owner_id: uuid.UUID,
+        platform: str,
+        scheduled_at: datetime | None = None,
     ) -> ContentOutcome:
         """Draft the same content again as a new version, needing fresh approval."""
         return self.generate(
-            campaign, owner_id=owner_id, platform=platform, content_id=content_id
+            campaign,
+            owner_id=owner_id,
+            platform=platform,
+            scheduled_at=scheduled_at,
+            content_id=content_id,
         )
 
     def decide(self, request_id: uuid.UUID, decision: str, *, owner_id: uuid.UUID) -> None:
@@ -159,6 +189,69 @@ class ContentPlanner(WorkflowService):
     def is_approved(self, content: RecordRef) -> bool:
         with self.store.unit_of_work() as session:
             return self.approvals.is_approved(session, content, ApprovalKind.MARKETING_CONTENT)
+
+    def place_on_calendar(self, content: RecordRef, *, owner_id: uuid.UUID) -> ContentOutcome:
+        """UC-08 step 8: put an approved, exportable version in the calendar.
+
+        Placing content on the calendar changes only a mutable field, so the
+        version does not move and the approval still holds. Nothing is
+        published: the calendar says what the owner intends to post, and when.
+        """
+        with self.store.unit_of_work() as session:
+            if not self.approvals.is_approved(
+                session, content, ApprovalKind.MARKETING_CONTENT
+            ):
+                return ContentOutcome(
+                    ContentStatus.NOT_APPROVED,
+                    content=content,
+                    problems=("this version of the content is not approved",),
+                )
+            stored = self.store.load_ref(session, content)
+            if not stored.is_ready_for_export():
+                return ContentOutcome(
+                    ContentStatus.NOT_READY,
+                    content=content,
+                    problems=("the content has no platform, body or scheduled time",),
+                )
+            if stored.calendar_placed_at is None:
+                stored.calendar_placed_at = datetime.now(UTC)
+                self.store.commit(
+                    session,
+                    stored,
+                    actor_id=owner_id,
+                    action="content.place_on_calendar",
+                    expected_version=content.version,
+                )
+        return ContentOutcome(ContentStatus.SCHEDULED, content=content)
+
+    def export(self, content: RecordRef) -> ExportOutcome:
+        """UC-08 step 8: hand the owner the text to post by hand.
+
+        Refused unless this exact version is approved, still current, ready
+        and in the calendar. The system never publishes anything itself.
+        """
+        with self.store.unit_of_work() as session:
+            if not self.approvals.is_approved(
+                session, content, ApprovalKind.MARKETING_CONTENT
+            ):
+                return ExportOutcome(
+                    ContentStatus.NOT_APPROVED,
+                    problems=("this version of the content is not approved",),
+                )
+            stored = self.store.load_ref(session, content)
+            if not stored.is_ready_for_export():
+                return ExportOutcome(
+                    ContentStatus.NOT_READY,
+                    problems=("the content has no platform, body or scheduled time",),
+                )
+            if stored.calendar_placed_at is None:
+                return ExportOutcome(
+                    ContentStatus.NOT_IN_CALENDAR,
+                    problems=("the content is not in the calendar yet",),
+                )
+            return ExportOutcome(
+                ContentStatus.SCHEDULED, text=self.marketing.export_approved(stored)
+            )
 
     def _check(self, proposal: ContentProposal, *, featured: set[uuid.UUID]) -> list[str]:
         """Every problem at once, so one regeneration can fix them all (4a)."""
@@ -187,6 +280,7 @@ class ContentPlanner(WorkflowService):
         campaign: RecordRef,
         platform: str,
         owner_id: uuid.UUID,
+        scheduled_at: datetime | None,
         content_id: uuid.UUID | None,
     ) -> ContentOutcome:
         with self.store.unit_of_work() as session:
@@ -200,6 +294,7 @@ class ContentPlanner(WorkflowService):
                 campaign_version=campaign.version,
                 platform=platform,
                 body=draft.body,
+                scheduled_at=scheduled_at,
             )
             if content_id is not None:
                 content.content_id = content_id

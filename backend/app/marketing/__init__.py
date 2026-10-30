@@ -23,6 +23,7 @@ from app.marketing.content import (
     ContentOutcome,
     ContentPlanner,
     ContentStatus,
+    ExportOutcome,
 )
 from app.marketing.summary import (
     CLOSED_STATUSES,
@@ -52,6 +53,7 @@ __all__ = [
     "ContentPlanner",
     "ContentProposal",
     "ContentStatus",
+    "ExportOutcome",
     "MarketingAgent",
     "MarketingService",
     "PlanOutcome",
