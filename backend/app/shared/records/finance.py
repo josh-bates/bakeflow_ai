@@ -1,8 +1,11 @@
-"""Quotations and ledger transactions (Stage 1 Fig. 6; §5.3).
+"""Quotations, ledger transactions and mock payments (Stage 1 Fig. 6; §5.3).
 
 Every quote revision is a new row (``quote_id``, ``version``), so earlier
 proposals and their approvals stay in history [R7, R10]. Quotes carry no
 approval status column: approval lives in ``approval_requests``.
+
+``mock_payments`` (BAKE-39 [O3]) is a Stage 2 extension: a local simulation of
+paying for a confirmed order, with no bank, card data or real provider.
 """
 
 from __future__ import annotations
@@ -11,14 +14,28 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String, UniqueConstraint, Uuid
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.shared.records._common import (
     CustomerDecision,
+    InPlaceVersioned,
     Margin,
     Money,
+    PaymentStatus,
     RecordMixin,
     RowVersioned,
     Timestamp,
@@ -61,6 +78,9 @@ class Quote(RowVersioned, Base):
     total: Mapped[Decimal] = mapped_column(Money)
     customer_decision: Mapped[str] = mapped_column(String(16), default=CustomerDecision.PENDING)
     requires_manual_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    # BAKE-22/23: the checked explanation of this version's figures; NULL when
+    # no usable explanation was produced (UC-05 4a, so manual review is set).
+    explanation: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(Timestamp, default=utcnow)
 
 
@@ -88,3 +108,50 @@ class Transaction(RecordMixin, Base):
     request_key: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     occurred_at: Mapped[datetime] = mapped_column(Timestamp)
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("user_accounts.user_id"))
+
+
+class MockPayment(InPlaceVersioned, Base):
+    """One local mock payment for a confirmed order (BAKE-39 [O3]).
+
+    The amount is copied from the accepted quote when the payment is created
+    and never comes from the client. A payment settles once: ``Succeeded``
+    always has its one income transaction, ``Failed`` never has one.
+    """
+
+    __tablename__ = "mock_payments"
+    __record_type__ = "MockPayment"
+    __record_id__ = "payment_id"
+    __table_args__ = (
+        one_of("status", PaymentStatus, "status"),
+        CheckConstraint("amount > 0", name="amount_positive"),
+        CheckConstraint(
+            "(status = 'Succeeded') = (transaction_id IS NOT NULL)", name="income_iff_succeeded"
+        ),
+        CheckConstraint("(status = 'Created') = (processed_at IS NULL)", name="processed_iff_settled"),
+        CheckConstraint("version > 0", name="version_positive"),
+        ForeignKeyConstraint(
+            ["accepted_quote_id", "accepted_quote_version"],
+            ["quotes.quote_id", "quotes.version"],
+            name="fk_mock_payments_accepted_quote_quotes",
+        ),
+        UniqueConstraint("transaction_id", name="uq_mock_payments_transaction_id"),
+        # At most one open or paid payment per order; a failed one can be retried.
+        Index(
+            "uq_mock_payments_open_order",
+            "order_id",
+            unique=True,
+            postgresql_where=text("status IN ('Created', 'Succeeded')"),
+        ),
+    )
+
+    payment_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.order_id"), index=True)
+    accepted_quote_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    accepted_quote_version: Mapped[int] = mapped_column(Integer)
+    amount: Mapped[Decimal] = mapped_column(Money)
+    status: Mapped[str] = mapped_column(String(16), default=PaymentStatus.CREATED)
+    transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("transactions.transaction_id")
+    )
+    created_at: Mapped[datetime] = mapped_column(Timestamp, default=utcnow)
+    processed_at: Mapped[datetime | None] = mapped_column(Timestamp)

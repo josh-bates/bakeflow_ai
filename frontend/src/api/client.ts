@@ -91,6 +91,21 @@ export type PlanResult = {
   excluded: { orderId: string; reason: string }[];
 };
 export type ReleaseResult = { status: "Released" | "ReleaseBlocked" | "Withheld"; problems: string[] };
+/** IP-01 (BAKE-33): stock used once when an order's last task is done. */
+export type Deduction = {
+  id: string;
+  scheduleVersion: number;
+  deductedAt: string;
+  lines: { itemId: string; ingredient: string; unit: string; quantity: string; onHand: string }[];
+};
+export type TaskProgress = {
+  taskId: string;
+  status: "InProgress" | "Completed";
+  order: { recordId: string; version: number };
+  orderStatus: string;
+  deduction: Deduction | null;
+  replayed: boolean;
+};
 
 export class ApiError extends Error {
   constructor(
@@ -187,6 +202,21 @@ function schedule(value: unknown): boolean {
     (value.notice === null || typeof value.notice === "string") &&
     scheduleVersion(value.latest) &&
     (value.released === null || scheduleVersion(value.released))
+  );
+}
+function deduction(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    Number.isInteger(value.scheduleVersion) &&
+    typeof value.deductedAt === "string" &&
+    Array.isArray(value.lines) &&
+    value.lines.every(
+      (l) =>
+        record(l) &&
+        [l.itemId, l.ingredient, l.unit].every((v) => typeof v === "string") &&
+        [l.quantity, l.onHand].every(quantity),
+    )
   );
 }
 const JSON_POST = (csrfToken: string, body: unknown): RequestInit => ({
@@ -336,6 +366,24 @@ export const api = {
     if (!record(value) || !["Released", "ReleaseBlocked", "Withheld"].includes(String(value.status)) ||
         !strings(value.problems)) return invalid();
     return value as ReleaseResult;
+  },
+  /** Records that a released task has started or is done; the order's last one done deducts its stock. */
+  async recordTaskProgress(scheduleId: string, taskId: string, status: "InProgress" | "Completed",
+                           csrfToken: string): Promise<TaskProgress> {
+    const value = await request(
+      `/schedules/${encodeURIComponent(scheduleId)}/tasks/${encodeURIComponent(taskId)}/progress`,
+      JSON_POST(csrfToken, { status }));
+    if (
+      !record(value) ||
+      typeof value.taskId !== "string" ||
+      !["InProgress", "Completed"].includes(String(value.status)) ||
+      !record(value.order) || typeof value.order.recordId !== "string" || !Number.isInteger(value.order.version) ||
+      typeof value.orderStatus !== "string" ||
+      !(value.deduction === null || deduction(value.deduction)) ||
+      typeof value.replayed !== "boolean"
+    )
+      return invalid();
+    return value as TaskProgress;
   },
   async confirm(confirmationToken: string, csrfToken: string): Promise<DraftReceipt> {
     const value = await request("/order-requests/confirm", {
