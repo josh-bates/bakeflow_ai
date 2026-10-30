@@ -144,28 +144,30 @@ export function App() {
       {session?.user.role === "Owner" ? (
         <div className="owner-shell">
           <aside className="side">
-            <div className="side-brand">{brand}</div>
-            <p className="toc-title" aria-hidden="true">Contents</p>
-            <nav className="toc" aria-label="Main navigation">
-              {Object.entries(ownerPages).map(([key, value], index) => (
-                <a
-                  key={key}
-                  href={`#/owner/${key}`}
-                  aria-current={route === `/owner/${key}` ? "page" : undefined}
-                >
-                  <span className="n" aria-hidden="true">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  {value.title}
-                  {key === "orders" && <span className="soon" aria-hidden="true">Soon</span>}
-                </a>
-              ))}
-            </nav>
-            <figure className="cameo">
-              <img src="/images/chocolate-cake.jpg" alt="" />
-              <p>A little less admin.<br />A little more baking.</p>
-            </figure>
-            <p className="side-meta">ELEC5620 · Prototype</p>
+            <div className="side-inner">
+              <div className="side-brand">{brand}</div>
+              <p className="toc-title" aria-hidden="true">Contents</p>
+              <nav className="toc" aria-label="Main navigation">
+                {Object.entries(ownerPages).map(([key, value], index) => (
+                  <a
+                    key={key}
+                    href={`#/owner/${key}`}
+                    aria-current={route === `/owner/${key}` ? "page" : undefined}
+                  >
+                    <span className="n" aria-hidden="true">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    {value.title}
+                    {key === "orders" && <span className="soon" aria-hidden="true">Soon</span>}
+                  </a>
+                ))}
+              </nav>
+              <figure className="cameo">
+                <img src="/images/chocolate-cake.jpg" alt="" />
+                <p>A little less admin.<br />A little more baking.</p>
+              </figure>
+              <p className="side-meta">ELEC5620 · Prototype</p>
+            </div>
           </aside>
           <div>
             <header className="topbar">

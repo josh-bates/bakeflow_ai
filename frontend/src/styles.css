@@ -89,7 +89,9 @@ h1 em, h2 em, h3 em { font-style: italic; color: var(--raspberry); }
 
 /* ---------- Owner shell: contents sidebar and page ---------- */
 .owner-shell { display: grid; grid-template-columns: 264px minmax(0, 1fr); min-height: 100vh; }
-.side { position: sticky; top: 0; display: flex; flex-direction: column; height: 100vh; overflow-y: auto; padding: 30px 20px 24px; background: var(--awning); color: #e3eee8; }
+/* The aside stretches with the page so the green runs to the bottom; its contents stay in view while scrolling. */
+.side { background: var(--awning); color: #e3eee8; }
+.side-inner { position: sticky; top: 0; display: flex; flex-direction: column; height: 100vh; overflow-y: auto; padding: 30px 20px 24px; }
 .side-brand { padding-bottom: 22px; border-bottom: 1px solid rgba(227, 201, 144, .4); text-align: center; }
 .toc-title { display: flex; align-items: center; gap: 10px; margin: 24px 8px 10px; font: 700 .73rem/1 var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--mint); }
 .toc-title::after { content: ""; flex: 1; height: 1px; background: rgba(207, 229, 216, .35); }
@@ -291,7 +293,7 @@ input:disabled, select:disabled, textarea:disabled { background: #f3f1ec; }
 }
 @media (max-width: 1100px) {
   .owner-shell { grid-template-columns: minmax(0, 1fr); }
-  .side { position: static; height: auto; padding: 14px 20px 8px; }
+  .side-inner { position: static; height: auto; padding: 14px 20px 8px; }
   .side-brand { display: flex; justify-content: center; padding-bottom: 12px; }
   .side-brand .brand { flex-direction: row; gap: 12px; }
   .side-brand .brand-mark { width: 34px; height: 44px; margin: 0; font-size: 1.35rem; }
