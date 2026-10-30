@@ -1,13 +1,13 @@
 """BAKE-33 order deductions that lower stock once per order [R2].
 
 Revision ID: bake33_deductions
-Revises: bake32_receipts
+Revises: bake39_payments
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "bake33_deductions"
-down_revision = "bake32_receipts"
+down_revision = "bake39_payments"
 branch_labels = None
 depends_on = None
 
