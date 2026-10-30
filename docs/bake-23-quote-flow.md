@@ -1,7 +1,6 @@
 # BAKE-23: quote approval and customer acceptance
 
-> **Status: service layer complete, using Angelina's `ApprovalService` (BAKE-15, merged in #24).**
-> Routes and UI come next, in a separate PR once this one merges. BAKE-23 stays **In Progress** until then.
+> **Status: service layer (#21, merged), routes and UI (this PR) complete.** The only follow-up is wiring in BAKE-22's explainer once #19 merges.
 
 Implements UC-05 steps 1-3 and 5-9 (AR-03): save a versioned quote draft for the owner; the owner approves it, withholds approval or revises it; the customer sees only the approved current version; and acceptance confirms the order in one transaction.
 
@@ -27,15 +26,34 @@ Implements UC-05 steps 1-3 and 5-9 (AR-03): save a versioned quote draft for the
   - Both follow BAKE-8's `ALLOWED_MOVES` and commit with `expected_version`, without bumping the version.
 - **Migration `bake23_quote_explanation`:** a nullable `quotes.explanation` column, which BAKE-22 deferred to this story. NULL means no usable explanation, so the quote is flagged for manual review (4a).
 
-## Next (separate PRs)
+## Routes and UI
 
-| Dependency | Then |
+**Owner** (`backend/app/pricing_bookkeeping/quote_routes.py`, in the owner-only `/api/finance` family, CSRF checked on every POST, and each handler declares `require_owner`):
+
+| Route | Result |
 |---|---|
-| BAKE-22 (#19): QuoteExplainer | Pass `explain=lambda calc, units: ...` wrapping `QuoteExplainer.explain`. Until then, drafts get no explanation and are flagged for manual review, which is correct 4a behaviour. |
-| Routes (BAKE-14's sign-in is merged) | Owner routes: `POST /api/finance/orders/{id}/quotes` and `/api/finance/quotes/{id}/versions/{v}/approve`, `…/withhold` and `…/revise`. Customer routes: `GET /api/orders/{id}/quote` and `POST …/accept` and `…/reject`. |
-| UI | Owner Approvals page (figures, flags, explanation or "manual review", and actions) and the customer quote card with Accept and Reject. |
+| `GET /api/finance/quotes` | Draft and Quoted orders, soonest collection first, each with whether it can be priced (a current stock check), its latest quote version and the owner's decision (Pending, Approved or Withheld) |
+| `POST /api/finance/orders/{id}/quotes` | 201: version 1, with optional `additionalCosts: [{description, amount}]` |
+| `POST /api/finance/quotes/{id}/versions/{v}/revise` | 201: a new version |
+| `POST /api/finance/quotes/{id}/versions/{v}/approve` and `/withhold` | 200 for exactly that version; 409 with the reason for a superseded or already decided version |
 
-**Migration chain:** `bake23_quote_explanation` follows BAKE-32's `bake32_receipts` (re-pointed after #33 merged), so Alembic has one head. #34 (BAKE-39) also follows `bake32_receipts`; whichever of #21 and #34 merges second is re-pointed to the other.
+**Customer** (`current_customer`; another customer's order is "not found", the same as a missing one):
+
+| Route | Result |
+|---|---|
+| `GET /api/orders/{id}/quote` | `{quote}`: the approved, current version with only its total and decision (never the bakery's costs), or `null` |
+| `POST /api/quotes/{id}/versions/{v}/accept` | Confirms the order (TX-ACCEPT); a retry returns `replayed: true` |
+| `POST /api/quotes/{id}/versions/{v}/reject` | Records the rejection; the owner sees it and can revise |
+
+Amounts are decimal strings both ways, so a JSON number or more than two decimal places is a 422.
+
+**Pages.**
+- The owner's **Pending approvals** page (previously a placeholder) lists each order being quoted. It shows "Calculate quote", the breakdown (ingredients, labour, packaging, additional costs, quoted price and target margin), the manual-review flag, the explanation or "Explanation unavailable", the decision, and the actions: Approve version N, Withhold and revise, and Revise as a new version with an optional extra cost.
+- On the customer page, a **Quoted** order has "View quote". It shows the total with Accept and Decline, or says the quote is still being prepared.
+
+**Explanation.** BAKE-22's explainer (#19) is not merged yet, so quotes are saved without an explanation and flagged for manual review (4a). Once #19 merges, `draft` and `revise` get `explain=` wrapping `QuoteExplainer.explain`, a small follow-up.
+
+**Migration chain:** `bake23_quote_explanation` follows BAKE-32's `bake32_receipts`. This PR adds no migration.
 
 ## Review of #21 (Carl)
 
@@ -78,3 +96,17 @@ Implements UC-05 steps 1-3 and 5-9 (AR-03): save a versioned quote draft for the
   - **if `OrderService.confirm` fails, neither the acceptance nor the confirmation is stored, and a retry then succeeds exactly once**;
   - a rejection is recorded and can be followed by a revision;
   - another customer gets "not found".
+
+**Routes and UI (this PR):**
+- `tests/integration/test_quote_routes.py` (PostgreSQL, real sign-in and CSRF):
+  - the owner prices, approves (a double click is harmless) and the customer accepts, so the order is Confirmed, a retry is replayed, and the order leaves the queue;
+  - withhold, refused re-approval, revise with a $5.00 gift box, approve version 2, and the customer rejects;
+  - amounts must be decimal strings;
+  - each side reaches only its own routes (401, 403, and 404 for another customer).
+- `frontend/src/test/ApprovalsPage.test.tsx`:
+  - pricing shows every figure and the manual-review flag;
+  - approving sends exactly the shown version;
+  - a revision with an extra cost, where an invalid amount is never sent;
+  - the server's refusal reason is shown;
+  - the customer accepts without ever seeing the bakery's costs;
+  - "still preparing" is shown when no quote is approved.
