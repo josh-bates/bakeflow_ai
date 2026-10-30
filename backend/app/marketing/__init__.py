@@ -7,17 +7,23 @@ business summary that UC-07 step 2 hands to the agent.
 """
 
 from app.marketing.summary import (
+    CLOSED_STATUSES,
     MIN_LEDGER_TRANSACTIONS,
+    SOLD_STATUSES,
     BusinessSummary,
     CapacityPosition,
     MarketingService,
+    ProductDemand,
     StockPosition,
 )
 
 __all__ = [
+    "CLOSED_STATUSES",
     "MIN_LEDGER_TRANSACTIONS",
+    "SOLD_STATUSES",
     "BusinessSummary",
     "CapacityPosition",
     "MarketingService",
+    "ProductDemand",
     "StockPosition",
 ]
