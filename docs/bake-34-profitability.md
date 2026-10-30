@@ -42,7 +42,7 @@ From Carl's review of #20: ingredient invoices are usually general, not recorded
 
 ## Verification
 
-- Part 3: `tests/unit/test_profit_explanation.py` (13 tests: the figures, the Mock reply passing the check, an invented, negated or wrongly labelled number and words refused, a loss with its sign, success, failure after three attempts keeping the figures, provider errors counting as attempts, and the prompt); the route's permissions in `tests/unit/test_profitability_routes.py`; a PostgreSQL API test of a Mock explanation and a failed one with the figures unchanged; and `FinancePage.test.tsx` (no call until asked, the CSRF token, the explanation shown, the notice on failure, the figures kept).
+- Part 3: `tests/unit/test_profit_explanation.py` (12 tests: the figures, the Mock reply passing the check, an invented, negated or wrongly labelled number and words refused, a loss with its sign, success, failure after three attempts keeping the figures, provider errors counting as attempts, and the prompt); the route's permissions in `tests/unit/test_profitability_routes.py`; a PostgreSQL API test of a Mock explanation and a failed one with the figures unchanged; and `FinancePage.test.tsx` (no call until asked, the CSRF token, the explanation shown, the notice on failure, the figures kept).
 
 - Part 2: `tests/unit/test_profitability_routes.py` (no session gives 401, a customer gets 403, bad periods give 422); an API test in `tests/integration/test_profitability.py` checks the exact decimal strings and a period filter; `frontend/src/test/FinancePage.test.tsx` checks that the figures render exactly and that float money is refused.
 
