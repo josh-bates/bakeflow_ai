@@ -1,6 +1,6 @@
 # BAKE-39: local mock payment for confirmed orders
 
-> **Status: backend done (service, record, migration, API).** The customer's "Pay" button follows once BAKE-23's customer quote page exists, so this PR doesn't stack on #21.
+> **Status: backend (#34, merged), settle checks (#40) and the customer's Pay button (this PR) done.**
 
 Josh's optional feature (architecture [O3], T-PAYMENT-REPLAY). A customer pays for an order that was confirmed from an accepted, current, owner-approved quote. The payment is simulated locally: there is no bank, no card data, no keys and no real or sandbox provider. A successful payment is recorded once as income in the BAKE-24 ledger.
 
@@ -43,9 +43,13 @@ AI agents play no part in amounts or payment state.
 - **No `WorkflowService.handle(PAYMENT_CALLBACK_*)`.** Architecture §4 routes callbacks through it, but it doesn't exist yet, so the routes call `PaymentService` directly.
 - **Recorded actor:** the paying customer's account is recorded as the actor for the payment and its income, since there is no provider account.
 
-## Next
+## Customer UI and migration
 
-- **Customer UI**, once BAKE-23's customer quote page is merged: a "Pay" button on a confirmed order, the mock checkout (succeed or decline), and the payment status.
+- **Customer UI** (`frontend/src/customer/CustomerPage.tsx`): each Confirmed, Scheduled, InProduction or Completed order has **Pay**.
+  - **Paid already:** it says so, and no payment is started.
+  - **Otherwise:** it starts (or reopens) the payment and shows the amount due from the server, with **Pay $X (test)** and **Simulate a declined payment**. The page sends only the outcome: never an amount, never card details.
+  - **Declined, or a success that can't be recorded:** it says nothing was charged, gives the reason when there is one, and offers **Try again**.
+  - Tests are in `frontend/src/test/Payment.test.tsx` (5).
 - **Migration chain:** `bake39_payments` follows BAKE-23's `bake23_quote_explanation` (re-pointed after #21 merged), so Alembic keeps one head.
 
 ## Verification
