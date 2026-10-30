@@ -6,6 +6,16 @@ BAKE-25 provides ``MarketingService.summarise_business``, the validated
 business summary that UC-07 step 2 hands to the agent.
 """
 
+from app.marketing.campaigns import (
+    LOW_CONFIDENCE_NOTICE,
+    MAX_FEATURED_PRODUCTS,
+    MIN_CONFIDENCE,
+    CampaignPlanner,
+    CampaignProposal,
+    MarketingAgent,
+    PlanOutcome,
+    PlanStatus,
+)
 from app.marketing.summary import (
     CLOSED_STATUSES,
     MIN_LEDGER_TRANSACTIONS,
@@ -19,11 +29,19 @@ from app.marketing.summary import (
 
 __all__ = [
     "CLOSED_STATUSES",
+    "LOW_CONFIDENCE_NOTICE",
+    "MAX_FEATURED_PRODUCTS",
+    "MIN_CONFIDENCE",
     "MIN_LEDGER_TRANSACTIONS",
     "SOLD_STATUSES",
     "BusinessSummary",
+    "CampaignPlanner",
+    "CampaignProposal",
     "CapacityPosition",
+    "MarketingAgent",
     "MarketingService",
+    "PlanOutcome",
+    "PlanStatus",
     "ProductDemand",
     "StockPosition",
 ]
