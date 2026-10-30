@@ -12,7 +12,7 @@ owner asks, so the Finance page never waits on a model.
   referenced amount must equal its labelled figure, and every number in the
   narrative, with its sign, must be one of them. Numbers in words are refused.
 - ``ProfitExplainer.explain`` runs through ``WorkflowService.run_ai_task``
-  (three attempts, and saved in ``ai_requests`` once BAKE-37 is merged). If no
+  (three attempts, saved in ``ai_requests`` with ``PROMPT_VERSION``). If no
   explanation is usable (5a), the owner still gets the figures, unchanged,
   with ``UNAVAILABLE_NOTICE``.
 
@@ -168,6 +168,7 @@ class ProfitExplainer:
                 # BAKE-8's failure audit needs an order stage; profit is earned
                 # on completed orders.
                 subject, OrderStage.COMPLETED, attempt, usable, actor=actor, event_type=EVENT_TYPE,
+                prompt_version=PROMPT_VERSION,
             )
         except AIOperationFailed:
             return ExplainedProfit(summary, None, UNAVAILABLE_NOTICE, tuple(last_problems))

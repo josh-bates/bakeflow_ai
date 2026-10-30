@@ -17,7 +17,7 @@ export type OrderSummary = {
   allergen_concerns: string[] | null;
   budget: string | null;
 };
-export type Submission = { summary: OrderSummary; issues: string[]; confirmationToken: string | null };
+export type Submission = { summary: OrderSummary; issues: string[]; questions: string[]; confirmationToken: string | null };
 export type DraftReceipt = { orderId: string; status: "Draft" };
 /** Stock quantities are decimal strings with three places, never floats (BAKE-32). */
 export type StockItem = {
@@ -27,6 +27,35 @@ export type StockItem = {
   onHand: string;
   committed: string;
   available: string;
+  /** BAKE-37: the owner's reorder level; low means available is below it. */
+  reorderLevel: string;
+  version: number;
+  low: boolean;
+  /** Brings available stock back to twice the reorder level; null unless low. */
+  suggestedReorder: string | null;
+};
+export type LowStockExplanation = {
+  status: "Explained" | "Unavailable" | "NoAlerts" | "Changed";
+  explanation: string | null;
+  notice: string | null;
+  items: StockItem[];
+};
+/** One saved AI operation (BAKE-37, architecture [R5]); it holds no prompt or reply text. */
+export type AIRequestRecord = {
+  id: string;
+  task: string;
+  subject: { recordType: string; recordId: string; version: number };
+  actor: string;
+  provider: string;
+  model: string;
+  promptVersion: string | null;
+  status: "Running" | "Succeeded" | "Failed" | "Interrupted";
+  attempts: number;
+  latencyMs: number | null;
+  lastError: string | null;
+  outcome: { attempt: number; latencyMs: number; result: "usable" | "rejected" | "error"; error?: string }[];
+  startedAt: string;
+  finishedAt: string | null;
 };
 export type ReceiptSource = "Invoice" | "DeliveryNote";
 export type ReceiptInput = {
@@ -92,6 +121,57 @@ export type PlanResult = {
   excluded: { orderId: string; reason: string }[];
 };
 export type ReleaseResult = { status: "Released" | "ReleaseBlocked" | "Withheld"; problems: string[] };
+/** IP-01 (BAKE-33): stock used once when an order's last task is done. */
+export type Deduction = {
+  id: string;
+  scheduleVersion: number;
+  deductedAt: string;
+  lines: { itemId: string; ingredient: string; unit: string; quantity: string; onHand: string }[];
+};
+export type TaskProgress = {
+  taskId: string;
+  status: "InProgress" | "Completed";
+  order: { recordId: string; version: number };
+  orderStatus: string;
+  deduction: Deduction | null;
+  replayed: boolean;
+};
+
+/** UC-05 quotes (BAKE-23). Money is a decimal string, never a float. */
+export type OwnerQuote = {
+  id: string;
+  version: number;
+  orderId: string;
+  materialCost: string;
+  labourCost: string;
+  packagingCost: string;
+  additionalCost: string;
+  targetMargin: string;
+  total: string;
+  customerDecision: "Pending" | "Accepted" | "Rejected";
+  requiresManualReview: boolean;
+  explanation: string | null;
+};
+export type QuoteApproval = "Pending" | "Approved" | "Withheld";
+export type QuoteQueueItem = {
+  orderId: string;
+  summary: string;
+  requiredAt: string;
+  orderStatus: string;
+  /** The order has a stock check for its current version, so it can be priced. */
+  ready: boolean;
+  approval: QuoteApproval | null;
+  quote: OwnerQuote | null;
+};
+/** What the customer sees: the price to accept, not the bakery's costs. */
+export type CustomerQuote = {
+  id: string;
+  version: number;
+  orderId: string;
+  total: string;
+  customerDecision: "Pending" | "Accepted" | "Rejected";
+};
+export type ExtraCost = { description: string; amount: string };
 
 export class ApiError extends Error {
   constructor(
@@ -163,6 +243,33 @@ function profitLine(value: unknown): boolean {
     Number.isInteger(value.transactions)
   );
 }
+const DECISIONS = ["Pending", "Accepted", "Rejected"];
+function money(value: unknown): boolean {
+  return typeof value === "string" && MONEY.test(value);
+}
+function ownerQuote(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    Number.isInteger(value.version) &&
+    typeof value.orderId === "string" &&
+    ["materialCost", "labourCost", "packagingCost", "additionalCost", "total"].every((k) => money(value[k])) &&
+    typeof value.targetMargin === "string" &&
+    DECISIONS.includes(String(value.customerDecision)) &&
+    typeof value.requiresManualReview === "boolean" &&
+    (value.explanation === null || typeof value.explanation === "string")
+  );
+}
+function customerQuote(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    Number.isInteger(value.version) &&
+    typeof value.orderId === "string" &&
+    money(value.total) &&
+    DECISIONS.includes(String(value.customerDecision))
+  );
+}
 function strings(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === "string");
 }
@@ -204,6 +311,46 @@ function validProfitability(value: unknown): Profitability {
   )
     return invalid();
   return value as Profitability;
+}
+function stockItem(i: unknown): boolean {
+  return (
+    record(i) &&
+    [i.id, i.ingredient, i.unit].every((v) => typeof v === "string") &&
+    [i.onHand, i.committed, i.available, i.reorderLevel].every(quantity) &&
+    !String(i.reorderLevel).startsWith("-") &&
+    Number.isInteger(i.version) &&
+    typeof i.low === "boolean" &&
+    (i.low ? quantity(i.suggestedReorder) : i.suggestedReorder === null)
+  );
+}
+function aiRequest(r: unknown): boolean {
+  return (
+    record(r) &&
+    ["id", "task", "actor", "provider", "model", "startedAt"].every((k) => typeof r[k] === "string") &&
+    ["Running", "Succeeded", "Failed", "Interrupted"].includes(String(r.status)) &&
+    record(r.subject) &&
+    typeof r.subject.recordType === "string" &&
+    Number.isInteger(r.attempts) &&
+    (r.latencyMs === null || Number.isInteger(r.latencyMs)) &&
+    [r.promptVersion, r.lastError, r.finishedAt].every((v) => v === null || typeof v === "string") &&
+    Array.isArray(r.outcome) &&
+    r.outcome.every((a) => record(a) && Number.isInteger(a.attempt) && typeof a.result === "string")
+  );
+}
+function deduction(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    Number.isInteger(value.scheduleVersion) &&
+    typeof value.deductedAt === "string" &&
+    Array.isArray(value.lines) &&
+    value.lines.every(
+      (l) =>
+        record(l) &&
+        [l.itemId, l.ingredient, l.unit].every((v) => typeof v === "string") &&
+        [l.quantity, l.onHand].every(quantity),
+    )
+  );
 }
 const JSON_POST = (csrfToken: string, body: unknown): RequestInit => ({
   method: "POST",
@@ -276,6 +423,7 @@ export const api = {
     message: string,
     csrfToken: string,
     idempotencyKey: string,
+    clarifications: string[] = [],
   ): Promise<Submission> {
     const value = await request("/order-requests", {
       method: "POST",
@@ -284,7 +432,7 @@ export const api = {
         "X-CSRF-Token": csrfToken,
         "Idempotency-Key": idempotencyKey,
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, ...(clarifications.length ? { clarifications } : {}) }),
     });
     if (
       !record(value) ||
@@ -300,7 +448,8 @@ export const api = {
       !(value.confirmationToken === null || typeof value.confirmationToken === "string")
     )
       return invalid();
-    return value as Submission;
+    if (value.questions !== undefined && (!Array.isArray(value.questions) || !value.questions.every(q => typeof q === "string"))) return invalid();
+    return { ...value, questions: value.questions ?? [] } as Submission;
   },
   async profitability(): Promise<Profitability> {
     return validProfitability(await request("/finance/profitability"));
@@ -350,6 +499,81 @@ export const api = {
         !strings(value.problems)) return invalid();
     return value as ReleaseResult;
   },
+  /** The owner's open orders with their latest quote version (BAKE-23). */
+  async quoteQueue(): Promise<QuoteQueueItem[]> {
+    const value = await request("/finance/quotes");
+    if (
+      !record(value) ||
+      !Array.isArray(value.orders) ||
+      !value.orders.every(
+        (o) =>
+          record(o) &&
+          ["orderId", "summary", "requiredAt", "orderStatus"].every((k) => typeof o[k] === "string") &&
+          typeof o.ready === "boolean" &&
+          (o.approval === null || ["Pending", "Approved", "Withheld"].includes(String(o.approval))) &&
+          (o.quote === null || ownerQuote(o.quote)),
+      )
+    )
+      return invalid();
+    return value.orders as QuoteQueueItem[];
+  },
+  async draftQuote(orderId: string, additionalCosts: ExtraCost[], csrfToken: string): Promise<OwnerQuote> {
+    const value = await request(`/finance/orders/${encodeURIComponent(orderId)}/quotes`,
+      JSON_POST(csrfToken, { additionalCosts }));
+    if (!ownerQuote(value)) return invalid();
+    return value as OwnerQuote;
+  },
+  async reviseQuote(quote: OwnerQuote, additionalCosts: ExtraCost[], csrfToken: string): Promise<OwnerQuote> {
+    const value = await request(
+      `/finance/quotes/${encodeURIComponent(quote.id)}/versions/${quote.version}/revise`,
+      JSON_POST(csrfToken, { additionalCosts }));
+    if (!ownerQuote(value)) return invalid();
+    return value as OwnerQuote;
+  },
+  /** Approves or withholds exactly this version. A withheld version must be revised. */
+  async decideQuote(quote: OwnerQuote, decision: "approve" | "withhold", csrfToken: string): Promise<OwnerQuote> {
+    const value = await request(
+      `/finance/quotes/${encodeURIComponent(quote.id)}/versions/${quote.version}/${decision}`,
+      JSON_POST(csrfToken, {}));
+    if (!ownerQuote(value)) return invalid();
+    return value as OwnerQuote;
+  },
+  /** The approved, current quote for one of the customer's orders, or null. */
+  async customerQuote(orderId: string): Promise<CustomerQuote | null> {
+    const value = await request(`/orders/${encodeURIComponent(orderId)}/quote`);
+    if (!record(value) || !(value.quote === null || customerQuote(value.quote))) return invalid();
+    return value.quote as CustomerQuote | null;
+  },
+  async acceptQuote(quote: CustomerQuote, csrfToken: string): Promise<{ orderId: string; replayed: boolean }> {
+    const value = await request(
+      `/quotes/${encodeURIComponent(quote.id)}/versions/${quote.version}/accept`, JSON_POST(csrfToken, {}));
+    if (!record(value) || typeof value.orderId !== "string" || typeof value.replayed !== "boolean") return invalid();
+    return value as { orderId: string; replayed: boolean };
+  },
+  async rejectQuote(quote: CustomerQuote, csrfToken: string): Promise<CustomerQuote> {
+    const value = await request(
+      `/quotes/${encodeURIComponent(quote.id)}/versions/${quote.version}/reject`, JSON_POST(csrfToken, {}));
+    if (!customerQuote(value)) return invalid();
+    return value as CustomerQuote;
+  },
+  /** Records that a released task has started or is done; the order's last one done deducts its stock. */
+  async recordTaskProgress(scheduleId: string, taskId: string, status: "InProgress" | "Completed",
+                           csrfToken: string): Promise<TaskProgress> {
+    const value = await request(
+      `/schedules/${encodeURIComponent(scheduleId)}/tasks/${encodeURIComponent(taskId)}/progress`,
+      JSON_POST(csrfToken, { status }));
+    if (
+      !record(value) ||
+      typeof value.taskId !== "string" ||
+      !["InProgress", "Completed"].includes(String(value.status)) ||
+      !record(value.order) || typeof value.order.recordId !== "string" || !Number.isInteger(value.order.version) ||
+      typeof value.orderStatus !== "string" ||
+      !(value.deduction === null || deduction(value.deduction)) ||
+      typeof value.replayed !== "boolean"
+    )
+      return invalid();
+    return value as TaskProgress;
+  },
   async confirm(confirmationToken: string, csrfToken: string): Promise<DraftReceipt> {
     const value = await request("/order-requests/confirm", {
       method: "POST",
@@ -364,15 +588,38 @@ export const api = {
     if (
       !record(value) ||
       !Array.isArray(value.items) ||
-      !value.items.every(
-        (i) =>
-          record(i) &&
-          [i.id, i.ingredient, i.unit].every((v) => typeof v === "string") &&
-          [i.onHand, i.committed, i.available].every(quantity),
-      )
+      !value.items.every(stockItem)
     )
       return invalid();
     return value.items as StockItem[];
+  },
+  /** BAKE-37: changes one reorder level, for the item version the owner saw. */
+  async setReorderLevel(itemId: string, reorderLevel: string, version: number, csrfToken: string): Promise<StockItem> {
+    const value = await request(`/inventory/items/${encodeURIComponent(itemId)}/reorder-level`, {
+      ...JSON_POST(csrfToken, { reorderLevel, version }),
+      method: "PUT",
+    });
+    if (!stockItem(value)) return invalid();
+    return value as StockItem;
+  },
+  /** BAKE-37: the assistant explains the current alerts; it never changes stock or orders anything. */
+  async explainLowStock(csrfToken: string): Promise<LowStockExplanation> {
+    const value = await request("/inventory/low-stock/explanation", { ...JSON_POST(csrfToken, {}) });
+    if (
+      !record(value) ||
+      !["Explained", "Unavailable", "NoAlerts", "Changed"].includes(String(value.status)) ||
+      ![value.explanation, value.notice].every((v) => v === null || typeof v === "string") ||
+      !Array.isArray(value.items) ||
+      !value.items.every(stockItem)
+    )
+      return invalid();
+    return value as LowStockExplanation;
+  },
+  /** BAKE-37: the latest saved AI operations, newest first. */
+  async aiRequests(): Promise<AIRequestRecord[]> {
+    const value = await request("/owner/ai-requests");
+    if (!record(value) || !Array.isArray(value.requests) || !value.requests.every(aiRequest)) return invalid();
+    return value.requests as AIRequestRecord[];
   },
   /** Records a delivered ingredient; repeating the same receipt never raises stock twice. */
   async receiveStock(receipt: ReceiptInput, csrfToken: string): Promise<StockReceipt> {

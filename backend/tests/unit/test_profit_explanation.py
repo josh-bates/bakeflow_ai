@@ -10,13 +10,14 @@ from app.llm.gateway import LLMCallFailed, MockLLMClient
 from app.pricing_bookkeeping.agent import FinancialExplanation
 from app.pricing_bookkeeping.fixtures import mock_profit_explainer, valid_profit_explanation
 from app.pricing_bookkeeping.profit_explanation import (
+    PROMPT_VERSION,
     UNAVAILABLE_NOTICE,
     ProfitExplainer,
     check_profit_explanation,
     profit_figures,
 )
 from app.pricing_bookkeeping.profitability import LedgerFact, summarise
-from app.workflow.order_flow import MAX_ATTEMPTS
+from app.workflow.order_flow import MAX_ATTEMPTS, WorkflowService
 
 ORDER = uuid.uuid4()
 CUPCAKE = uuid.uuid4()
@@ -102,6 +103,20 @@ def test_a_consistent_explanation_is_returned_with_the_figures(summary):
     explained = ProfitExplainer(mock_profit_explainer(figures, names)).explain(summary, actor="owner")
     assert explained.text == valid_profit_explanation(figures, names)["narrative"]
     assert explained.summary is summary and explained.notice == ""
+
+
+def test_the_ai_request_is_saved_with_its_prompt_version(summary):
+    """BAKE-37: the explanation is logged in ai_requests under this prompt version."""
+    seen = {}
+
+    class Recorded(WorkflowService):
+        def run_ai_task(self, subject, stage, attempt, usable, **options):
+            seen.update(options)
+            return super().run_ai_task(subject, stage, attempt, usable, **options)
+
+    figures, names = profit_figures(summary)
+    ProfitExplainer(mock_profit_explainer(figures, names), Recorded()).explain(summary, actor="owner")
+    assert (seen["event_type"], seen["prompt_version"]) == ("ProfitExplanation", PROMPT_VERSION)
 
 
 def test_failure_after_three_attempts_keeps_the_figures(summary):
