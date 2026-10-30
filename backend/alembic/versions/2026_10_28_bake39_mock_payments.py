@@ -1,13 +1,13 @@
 """BAKE-39 local mock payments for confirmed orders [O3].
 
 Revision ID: bake39_payments
-Revises: bake32_receipts
+Revises: bake23_quote_explanation
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "bake39_payments"
-down_revision = "bake32_receipts"
+down_revision = "bake23_quote_explanation"
 branch_labels = None
 depends_on = None
 

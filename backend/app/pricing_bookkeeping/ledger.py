@@ -153,7 +153,8 @@ def validate_transaction(
         )
     elif "\x00" in reference:
         issues.append(ValidationIssue("source_reference", "contains a NUL character"))
-    elif len(reference.strip()) > MAX_REFERENCE_LENGTH:
+    # Measured as stored: upper-casing can lengthen text ("ß" becomes "SS").
+    elif len(reference.strip().upper()) > MAX_REFERENCE_LENGTH:
         issues.append(
             ValidationIssue("source_reference", f"must be at most {MAX_REFERENCE_LENGTH} characters")
         )
