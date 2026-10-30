@@ -49,6 +49,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(make_router(settings))
     from app.pricing_bookkeeping.routes import make_router as make_finance_router
     app.include_router(make_finance_router(settings))
+    from app.pricing_bookkeeping.payment_routes import make_router as make_payment_router
+    app.include_router(make_payment_router(settings))
 
     from app.sales.referral_routes import make_router as make_referral_router
     app.include_router(make_referral_router(settings))
