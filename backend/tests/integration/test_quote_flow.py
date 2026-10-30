@@ -258,6 +258,53 @@ def test_accepting_the_current_approved_quote_confirms_the_order(store, seeded, 
     assert load(store, Quote, ref.record_id).customer_decision == CustomerDecision.ACCEPTED
 
 
+def set_status(store, seeded, order_id, status):
+    """Move an order on as BAKE-21's release (Scheduled) or BAKE-30 (Cancelled) would."""
+    with store.unit_of_work() as session:
+        order = store.load(session, Order, order_id)
+        order.status = status
+        store.commit(session, order, actor_id=seeded.owner_id, action="test.status",
+                     expected_version=order.version)
+
+
+@pytest.mark.parametrize(
+    "later", [OrderStatus.SCHEDULED, OrderStatus.IN_PRODUCTION, OrderStatus.COMPLETED]
+)
+def test_retried_acceptance_after_the_order_moves_on_is_replayed(store, seeded, quotes, later):
+    order_id, ref = approved_quote(store, seeded, quotes)
+    first = quotes.accept(ref, customer_id=seeded.customer_id)
+    set_status(store, seeded, order_id, later)
+
+    retry = quotes.accept(ref, customer_id=seeded.customer_id)
+
+    assert retry.replayed and retry.order.record_id == first.order.record_id
+    assert load(store, Order, order_id).status == later
+    assert count(store, AuditEntry, AuditEntry.action == "order.confirmed") == 1
+
+
+def test_a_cancelled_order_cannot_be_approved_or_shown(store, seeded, quotes):
+    order_id = priced_order(store, seeded)
+    view = quotes.draft(order_id, owner_id=seeded.owner_id)
+    set_status(store, seeded, order_id, OrderStatus.CANCELLED)
+
+    for decide in (quotes.approve, quotes.withhold):
+        with pytest.raises(QuoteError) as refused:
+            decide(view.ref, owner_id=seeded.owner_id)
+        assert refused.value.code == "CONFLICT"
+    assert count(store, AuditEntry, AuditEntry.action == "approval.approved") == 0
+
+
+def test_an_approved_quote_is_hidden_once_its_order_is_cancelled(store, seeded, quotes):
+    order_id, ref = approved_quote(store, seeded, quotes)
+    set_status(store, seeded, order_id, OrderStatus.CANCELLED)
+
+    assert quotes.customer_view(order_id, customer_id=seeded.customer_id) is None
+    with pytest.raises(QuoteError) as refused:
+        quotes.accept(ref, customer_id=seeded.customer_id)
+    assert refused.value.code == "APPROVAL_REQUIRED"
+    assert load(store, Order, order_id).accepted_quote_id is None
+
+
 def test_accepting_a_superseded_version_does_not_confirm_the_order(store, seeded, quotes):
     order_id, v1 = approved_quote(store, seeded, quotes)
     quotes.revise(v1, owner_id=seeded.owner_id)

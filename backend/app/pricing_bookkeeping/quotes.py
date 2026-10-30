@@ -257,9 +257,10 @@ class QuoteService:
         """TX-ACCEPT: record the acceptance and confirm the order together, or neither."""
         with self.store.unit_of_work() as session:
             current, order = self._for_customer_decision(session, quote, customer_id)
+            # Already accepted: a retry gets the earlier result at every later
+            # stage too (Scheduled, InProduction, Completed after BAKE-21).
             if (
-                order.status == OrderStatus.CONFIRMED
-                and order.accepted_quote_id == quote.record_id
+                order.accepted_quote_id == quote.record_id
                 and order.accepted_quote_version == quote.version
             ):
                 return Acceptance(quote, self.store.ref(order), replayed=True)
@@ -326,6 +327,9 @@ class QuoteService:
     def _current_for_owner(self, session: Session, quote: RecordRef) -> tuple[Quote, Order]:
         order = self._order(session, self._latest(session, quote.record_id).order_id, lock=True)
         current = self._latest(session, quote.record_id, fresh=True)
+        if order.status not in _PRICEABLE:
+            # A cancelled or already confirmed order takes no new decision.
+            raise QuoteError("CONFLICT", f"an order that is {order.status} cannot be quoted")
         if current.version != quote.version:
             raise QuoteError("STALE_VERSION", f"quote is at version {current.version}")
         if current.source_order_version != order.version:
@@ -356,6 +360,8 @@ class QuoteService:
 
     def _presentable(self, session: Session, quote: Quote, order: Order) -> bool:
         ref = RecordRef("Quote", quote.quote_id, quote.version)
+        if order.status == OrderStatus.CANCELLED:
+            return False
         return quote.source_order_version == order.version and self.approvals.is_approved(
             session, ref, ApprovalKind.QUOTATION
         )

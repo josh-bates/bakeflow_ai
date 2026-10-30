@@ -42,6 +42,12 @@ Implements UC-05 steps 1-3 and 5-9 (AR-03): save a versioned quote draft for the
 - **Locking order.** `approve`, `withhold`, `accept` and `reject` now lock the order **before** reading the latest quote version, then re-read it fresh. `revise` saves under the same order lock, so a revision can't commit in between and the owner can't approve a version that was just superseded. A store-level `StaleVersionError` on a customer's decision becomes the "revised quotation will follow" `QuoteError`. A regression test injects a revision at exactly that moment.
 - **Alembic heads (done, 25 Oct).** #14 merged first, so `bake23_quote_explanation` now follows `bake14_sessions`, and the chain has a single head again.
 
+## Second review of #21 (Carl)
+
+- **Retried acceptance after scheduling.** A retry is now replayed whenever the order already records this quote version as accepted. That holds at every later stage too (Scheduled, InProduction, Completed after BAKE-21's release), not only while the order is Confirmed.
+- **Cancelled orders.** `approve` and `withhold` are refused (`CONFLICT`) unless the order is Draft or Quoted. Once an order is Cancelled, its quote is hidden from the customer and cannot be accepted.
+- **Withhold** stays a final decision for the version, matching architecture `QUOTE_WITHHELD` (agreed on #32). The quote page will label it "Withhold and revise".
+
 ## Deviations
 
 - **Order status:** the order is `Quoted` while an approved quote awaits the customer. This matches BAKE-8's merged `ALLOWED_MOVES`, whereas architecture §4.1.1 goes straight from Draft to Confirmed. Agreed in the review of #12.
@@ -58,6 +64,8 @@ Implements UC-05 steps 1-3 and 5-9 (AR-03): save a versioned quote draft for the
   - if the request fails, no quote is saved;
   - an order gets one quote, then revisions.
 - **Owner decisions:**
+  - a retried acceptance is replayed after the order moves on to Scheduled, InProduction or Completed;
+  - a cancelled order's quote cannot be approved or withheld, and an approved one is hidden and cannot be accepted;
   - the customer sees only an approved quote; withholding keeps it hidden, and a withheld version must be revised before approval;
   - the approval is recorded once by `ApprovalService` (kind `Quotation`, this version, the owner, one `approval.approved` audit entry), and a repeated approval changes nothing;
   - approval keeps `Order.version`;
