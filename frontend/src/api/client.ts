@@ -17,7 +17,7 @@ export type OrderSummary = {
   allergen_concerns: string[] | null;
   budget: string | null;
 };
-export type Submission = { summary: OrderSummary; issues: string[]; confirmationToken: string | null };
+export type Submission = { summary: OrderSummary; issues: string[]; questions: string[]; confirmationToken: string | null };
 export type DraftReceipt = { orderId: string; status: "Draft" };
 /** Stock quantities are decimal strings with three places, never floats (BAKE-32). */
 export type StockItem = {
@@ -290,6 +290,7 @@ export const api = {
     message: string,
     csrfToken: string,
     idempotencyKey: string,
+    clarifications: string[] = [],
   ): Promise<Submission> {
     const value = await request("/order-requests", {
       method: "POST",
@@ -298,7 +299,7 @@ export const api = {
         "X-CSRF-Token": csrfToken,
         "Idempotency-Key": idempotencyKey,
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, ...(clarifications.length ? { clarifications } : {}) }),
     });
     if (
       !record(value) ||
@@ -314,7 +315,8 @@ export const api = {
       !(value.confirmationToken === null || typeof value.confirmationToken === "string")
     )
       return invalid();
-    return value as Submission;
+    if (value.questions !== undefined && (!Array.isArray(value.questions) || !value.questions.every(q => typeof q === "string"))) return invalid();
+    return { ...value, questions: value.questions ?? [] } as Submission;
   },
   async profitability(): Promise<Profitability> {
     const value = await request("/finance/profitability");

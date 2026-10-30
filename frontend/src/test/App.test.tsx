@@ -294,6 +294,37 @@ it("reports rejected credentials and clears the password", async () => {
   expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
 });
 
+it("asks for clarification, re-extracts with the original request, then requires confirmation", async () => {
+  const user = userEvent.setup();
+  let rounds = 0;
+  fetchMock.mockImplementation(async (url: string) => url === "/api/session" ? response(session()) :
+    url === "/api/order-requests" ? response(++rounds === 1 ? { ...preview, summary: { ...preview.summary, allergen_concerns: null }, issues: ["Allergen information is missing."], questions: ["Do you have any allergen concerns?"], confirmationToken: null } : { ...preview, questions: [] }) : response({ orders: [] }));
+  render(<App />);
+  await user.type(await screen.findByLabelText("What would you like to order?"), "24 vanilla cupcakes");
+  await user.click(screen.getByRole("button", { name: /Send order request/ }));
+  expect(await screen.findByText("Do you have any allergen concerns?")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Confirm and save draft" })).toBeDisabled();
+  await user.type(screen.getByLabelText("Your answer or correction"), "no allergy concerns");
+  await user.click(screen.getByRole("button", { name: "Update my summary" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Confirm and save draft" })).toBeEnabled());
+  expect(fetchMock).toHaveBeenCalledWith("/api/order-requests", expect.objectContaining({ body: JSON.stringify({ message: "24 vanilla cupcakes", clarifications: ["no allergy concerns"] }) }));
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/order-requests/confirm")).toBe(false);
+});
+
+it("lets a customer end an unsupported request without saving", async () => {
+  const user = userEvent.setup();
+  fetchMock.mockImplementation(async (url: string) => url === "/api/session" ? response(session()) :
+    url === "/api/order-requests" ? response({ ...preview, issues: ["Unsupported product: croissant."], questions: ["Choose a supported product or end this request."], confirmationToken: null }) : response({ orders: [] }));
+  render(<App />);
+  await user.type(await screen.findByLabelText("What would you like to order?"), "24 croissants");
+  await user.click(screen.getByRole("button", { name: /Send order request/ }));
+  await user.click(await screen.findByRole("button", { name: "End request without saving" }));
+  expect(screen.getByText("Request ended. No draft was saved.")).toBeInTheDocument();
+  expect(screen.getByLabelText("What would you like to order?")).toHaveValue("");
+  expect(screen.queryByText("Your order summary")).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/order-requests/confirm")).toBe(false);
+});
+
 it("shows the stored status even when its explanation is unavailable", async () => {
   const user = userEvent.setup();
   fetchMock.mockImplementation(async (url: string) => url === "/api/session" ? response(session()) :
