@@ -418,6 +418,7 @@ class ProductionPlanner(WorkflowService):
         ).all()
         products = {p.product_id: p for p in session.scalars(select(Product))}
         elsewhere = self._released_elsewhere(session, schedule_id)
+        waiting = self._unreleased_elsewhere(session, schedule_id)
         candidates: list[_Candidate] = []
         excluded: list[ExcludedOrder] = []
         accepted: dict[uuid.UUID, dict[uuid.UUID, Decimal]] = {}
@@ -425,6 +426,11 @@ class ProductionPlanner(WorkflowService):
             ref = self.store.ref(order)
             if order.order_id in elsewhere:
                 excluded.append(ExcludedOrder(ref, "It is already in another released plan."))
+                continue
+            if order.order_id in waiting:
+                excluded.append(
+                    ExcludedOrder(ref, "It is already in another plan. Approve that plan or request a revised one.")
+                )
                 continue
             try:
                 needs = self.inventory.calculate_needs(session, order)
@@ -461,6 +467,29 @@ class ProductionPlanner(WorkflowService):
     def _released_elsewhere(session: Session, schedule_id: uuid.UUID | None) -> set[uuid.UUID]:
         """Orders in the released version of any schedule other than ``schedule_id``."""
         query = _released_snapshots()
+        if schedule_id is not None:
+            query = query.where(ProductionSchedule.schedule_id != schedule_id)
+        return {uuid.UUID(key) for snapshot in session.scalars(query) for key in snapshot}
+
+    @staticmethod
+    def _unreleased_elsewhere(session: Session, schedule_id: uuid.UUID | None) -> set[uuid.UUID]:
+        """Orders in the unreleased latest version of any schedule other than ``schedule_id``."""
+        query = (
+            select(ProductionScheduleVersion.requirements_snapshot)
+            .join(
+                ProductionSchedule,
+                and_(
+                    ProductionSchedule.schedule_id == ProductionScheduleVersion.schedule_id,
+                    ProductionSchedule.version == ProductionScheduleVersion.version,
+                ),
+            )
+            .where(
+                or_(
+                    ProductionSchedule.released_version.is_(None),
+                    ProductionSchedule.released_version != ProductionSchedule.version,
+                )
+            )
+        )
         if schedule_id is not None:
             query = query.where(ProductionSchedule.schedule_id != schedule_id)
         return {uuid.UUID(key) for snapshot in session.scalars(query) for key in snapshot}
