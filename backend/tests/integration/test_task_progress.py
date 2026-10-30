@@ -192,6 +192,43 @@ def test_old_and_unreleased_versions_take_no_progress(store, seeded):
     assert status_of(store, Order, cupcakes.record_id) == OrderStatus.SCHEDULED
 
 
+def test_a_repeat_on_a_replaced_version_is_refused_like_a_new_change(store, seeded):
+    # Review of #36: a repeat returned before the version check, so re-sending a
+    # change to a replaced version reported success.
+    cupcakes = order(store, seeded)
+    first = released_plan(store, seeded, cupcakes)
+    old_bake = task(store, first, "bake", version=1)
+    record(store, seeded, first, old_bake, STARTED)
+    revised = plan(store, seeded, figure10(cupcakes, finish=at(7, 30)), schedule_id=first.record_id)
+    release(store, seeded, revised)
+
+    with pytest.raises(ProgressRefused, match="Version 1 of this plan was replaced by version 2"):
+        record(store, seeded, first, old_bake, STARTED)
+    # On version 2, which release carried the start into, it is still a replay.
+    assert record(store, seeded, revised, task(store, revised, "bake"), STARTED).replayed
+
+
+def test_a_completed_orders_repeat_replays_after_a_revision_leaves_it_out(store, seeded):
+    cupcakes = order(store, seeded)
+    first = released_plan(store, seeded, cupcakes)
+    record(store, seeded, first, task(store, first, "bake"), DONE)
+    finished = record(store, seeded, first, task(store, first, "finish"), DONE)
+    later = order(store, seeded, cupcakes=12)
+    # Version 2 plans only the later order, two hours on.
+    revised = plan(store, seeded, [
+        {**t, "start_at": (datetime.fromisoformat(t["start_at"]) + timedelta(hours=2)).isoformat(),
+         "end_at": (datetime.fromisoformat(t["end_at"]) + timedelta(hours=2)).isoformat()}
+        for t in figure10(later)
+    ], schedule_id=first.record_id)
+    release(store, seeded, revised)
+
+    again = record(store, seeded, first, task(store, first, "finish", version=1), DONE)
+
+    # The deduction is final, so a retry of the completion still gets it back.
+    assert again.replayed and again.deduction.deduction_id == finished.deduction.deduction_id
+    assert (on_hand(store, seeded), count(store, OrderDeduction)) == (Decimal("400.000"), 1)
+
+
 def test_pending_revision_pauses_only_the_tasks_it_changes(store, seeded):
     cupcakes = order(store, seeded)
     first = released_plan(store, seeded, cupcakes)

@@ -21,7 +21,10 @@ that carries progress into a revised version [C1]:
   anything fails, the task change rolls back too, so a completion is never
   reported without its deduction.
 - Repeating a change already recorded returns it again: a repeated completion
-  returns the saved deduction and lowers stock no further.
+  returns the saved deduction and lowers stock no further. A repeat on a task
+  of a replaced version is refused like a new change, unless the order is
+  already Completed: then the deduction is final and the repeat can only be a
+  retry of what was recorded.
 """
 
 from __future__ import annotations
@@ -136,6 +139,8 @@ class TaskProgress:
             ).all()
             task = next(t for t in tasks if t.task_id == task_id)
             if task.status == status:
+                if order.status != OrderStatus.COMPLETED:
+                    self._check_version(schedule, task)
                 return self._outcome(session, task, order, replayed=True)
             self._check(session, schedule, task, order, status)
             if order.status == OrderStatus.SCHEDULED:
@@ -157,17 +162,8 @@ class TaskProgress:
         """Refuse a change that the effective version, a pending revision or the order rules out."""
         if task.status not in _FROM[status]:
             raise ProgressRefused(f"This task is already {task.status.lower()}.")
-        version, released = task.schedule_version, schedule.released_version
-        if released is None or version > released:
-            raise ProgressRefused(
-                f"Version {version} of this plan is not released yet; its tasks can start once"
-                " it is approved and released."
-            )
-        if version != released:
-            raise ProgressRefused(
-                f"Version {version} of this plan was replaced by version {released}."
-                f" Record progress on version {released}."
-            )
+        self._check_version(schedule, task)
+        released = schedule.released_version
         if schedule.version != released and not self._kept(session, task, schedule.version):
             zone = ZoneInfo(session.scalars(select(BakerySettings.time_zone)).one())
             raise ProgressRefused(
@@ -182,6 +178,21 @@ class TaskProgress:
         source = {ref.record_id: ref.version for ref in map(RecordRef.from_json, planned.source_order_refs)}
         if source.get(order.order_id) != order.version:
             raise ProgressRefused(f"{label} has changed since this plan was released. Request a revised plan.")
+
+    @staticmethod
+    def _check_version(schedule: ProductionSchedule, task: ProductionTask) -> None:
+        """Refuse a task outside the plan's effective ``released_version``."""
+        version, released = task.schedule_version, schedule.released_version
+        if released is None or version > released:
+            raise ProgressRefused(
+                f"Version {version} of this plan is not released yet; its tasks can start once"
+                " it is approved and released."
+            )
+        if version != released:
+            raise ProgressRefused(
+                f"Version {version} of this plan was replaced by version {released}."
+                f" Record progress on version {released}."
+            )
 
     @staticmethod
     def _kept(session: Session, task: ProductionTask, latest: int) -> bool:
