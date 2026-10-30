@@ -49,9 +49,16 @@ PERCENT_LABELS = ("target_margin_percent", "realised_margin_percent")
 COUNT_LABELS = ("labour_hours", "labour_minutes", "units")
 COST_LABELS = ("material_cost", "labour_cost", "packaging_cost", "additional_cost", "cost_subtotal")
 
+# A minus sign ("-" or "−") before or after the currency, so "-$48.00" is
+# read as -48.00, not 48.00 (review of #19). It must not follow a word
+# character or a dot, so "2-3 hours" and "24-cupcake" are not negative.
+_SIGN = r"(?:(?<![\w.\-−])(?P<sign>[-−])\s?)?"
+_INNER_SIGN = r"(?P<inner_sign>[-−])?"
+
 # A number in the narrative, with an optional currency before or percent after.
 _NUMBER = re.compile(
-    r"(?P<currency>\$|\bAUD\s*)?(?P<number>\d[\d,]*(?:\.\d+)?)(?P<percent>\s*(?:%|per\s?cent\b))?",
+    _SIGN + r"(?P<currency>\$|\bAUD\s*)?" + _INNER_SIGN
+    + r"(?P<number>\d[\d,]*(?:\.\d+)?)(?P<percent>\s*(?:%|per\s?cent\b))?",
     re.IGNORECASE,
 )
 
@@ -70,7 +77,8 @@ _NUMBER_WORDS = re.compile(
 _LABELLED_NUMBER = re.compile(
     r"\b(?P<keyword>total|price[sd]?|pricing|charged?|quoted?|costs?|costing)\b"
     r"(?P<gap>[^0-9$.%]{0,30}?)"
-    r"(?P<currency>\$|\bAUD\s*)?(?P<number>\d[\d,]*(?:\.\d+)?)",
+    + _SIGN + r"(?P<currency>\$|\bAUD\s*)?" + _INNER_SIGN
+    + r"(?P<number>\d[\d,]*(?:\.\d+)?)",
     re.IGNORECASE,
 )
 
@@ -143,7 +151,7 @@ def check_explanation(
     percents = {figures[label] for label in PERCENT_LABELS}
     anything = set(figures.values())
     for match in _NUMBER.finditer(explanation.narrative):
-        number = _decimal(match["number"].replace(",", "").rstrip("."))
+        number = _signed(match)
         if number is None:
             continue
         if match["currency"]:
@@ -163,7 +171,7 @@ def check_explanation(
     price = {figures[label] for label in ("total", "price_per_unit") if label in figures}
     costs = {figures[label] for label in COST_LABELS}
     for match in _LABELLED_NUMBER.finditer(explanation.narrative):
-        number = _decimal(match["number"].replace(",", "").rstrip("."))
+        number = _signed(match)
         if number is None:
             continue
         said = f"{match['keyword']}{match['gap']}".lower()
@@ -265,6 +273,14 @@ def plain(value: Decimal) -> str:
     """A figure as the agent should write it: no exponent, no trailing zeros
     beyond the figure's own precision (90 minutes is "90", $48 is "48.00")."""
     return format(value, "f")
+
+
+def _signed(match: re.Match) -> Decimal | None:
+    """The matched number with its minus sign, if any, so it is compared signed."""
+    number = _decimal(match["number"].replace(",", "").rstrip("."))
+    if number is not None and (match["sign"] or match["inner_sign"]):
+        return -number
+    return number
 
 
 def _decimal(text: str) -> Decimal | None:

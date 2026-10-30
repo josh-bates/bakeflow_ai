@@ -146,6 +146,27 @@ def test_number_written_in_words_is_rejected(calc):
     assert any("in words" in problem for problem in problems(expl, calc))
 
 
+@pytest.mark.parametrize(
+    "narrative",
+    [
+        "The price is -$48.00.",
+        "The price of $48.00 gives a profit of -$9.60.",
+        "The price of $48.00 includes a -20.00% margin.",
+        "The price is $-48.00.",
+        "The price of $48.00 gives a profit of −$9.60.",  # Unicode minus
+    ],
+)
+def test_a_negated_figure_is_rejected(calc, narrative):
+    # Review of #19: the sign was ignored, so -$48.00 passed as $48.00.
+    assert problems(explanation(narrative=narrative), calc)
+
+
+def test_hyphens_inside_words_and_ranges_are_not_minus_signs(calc):
+    expl = explanation(narrative="A 24-cupcake order takes 1.5-hour baking (90 minutes); "
+                                 "the total is $48.00.")
+    assert problems(expl, calc) == []
+
+
 def test_subtotal_called_the_total_is_rejected(calc):
     expl = explanation(narrative="The total price is $38.40.")  # 38.40 is the cost subtotal
     assert any("the price" in problem for problem in problems(expl, calc))

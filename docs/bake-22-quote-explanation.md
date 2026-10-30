@@ -18,6 +18,7 @@ Implements UC-05 step 4 and flow 4a (AR-03). The Pricing and Bookkeeping Agent e
 - **Numbers in words are rejected** (zero to ninety, hundred, thousand, million, dozen, half). The prompt already asks for figures exactly as given, so "about ninety dollars" can no longer slip past the digit check.
 - **Light label check:** the first number after "total", "price", "charge" or "quoted" must be the total or the price per unit. The first number after "cost" (including "total cost") must be one of the cost figures. This catches "the total price is $52.80" (the subtotal) and "it costs $75.43 to make" (the total).
 - **Why it failed:** `ExplainedQuote.problems` keeps the reasons the last attempt was rejected, so the owner can see why a quote went to manual review.
+- **Minus signs are read** (second review). A `-` or `−` before or after the `$` makes the number negative, so "-$48.00", a profit of "-$9.60" or a "-20.00%" margin no longer pass as the real figures. A hyphen right after a letter, digit or dot is not a sign, so "24-cupcake" and "1.5-hour" are unaffected.
 - **Known limitation:** the label check only looks at the first number after those words. Other wording can still misstate a figure, for example "the profit is $38.40" when that is the subtotal. The owner always sees the calculated figures next to the explanation, and must approve every quote.
 
 ## Decisions (from Carl's review of #12)
