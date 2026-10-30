@@ -75,6 +75,13 @@ def test_nul_character_in_a_reference_has_its_own_message():
     assert (issue.field, issue.message) == ("source_reference", "contains a NUL character")
 
 
+def test_reference_length_is_measured_after_upper_casing():
+    # 101 "ß" become 202 characters once stored as "SS"; found by Carl in #33's review.
+    [issue] = validate_transaction(flour_invoice(source_reference="ß" * 101), now=NOW)
+    assert issue.field == "source_reference"
+    assert validate_transaction(flour_invoice(source_reference="ß" * 100), now=NOW) == ()
+
+
 def test_all_invalid_fields_are_reported_together():
     entry = flour_invoice(kind="Gift", amount=Decimal("-1"), source_reference="")
     assert fields(entry) == {"kind", "amount", "source_reference"}

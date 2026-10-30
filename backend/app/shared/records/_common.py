@@ -64,6 +64,13 @@ class TransactionKind(StrEnum):
     EXPENSE = "Expense"
 
 
+class PaymentStatus(StrEnum):
+    # BAKE-39 [O3]: a local mock payment is Created, then settles once.
+    CREATED = "Created"
+    SUCCEEDED = "Succeeded"
+    FAILED = "Failed"
+
+
 class TaskStatus(StrEnum):
     # IP-05 / Stage 1 business invariant 10.
     PLANNED = "Planned"

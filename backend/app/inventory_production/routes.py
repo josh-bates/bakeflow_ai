@@ -1,4 +1,4 @@
-"""Inventory and production HTTP boundary (BAKE-31, BAKE-32, BAKE-21, BAKE-37). Owner only.
+"""Inventory and production HTTP boundary (BAKE-31, BAKE-32, BAKE-21, BAKE-33, BAKE-37). Owner only.
 
 ``/api/inventory`` and ``/api/schedules`` are owner-only route families in the
 auth middleware, which also checks the CSRF token on every POST; each handler
@@ -16,6 +16,11 @@ also declares ``require_owner``.
   for now (BAKE-21).
   A release that fails its final check is a 200 ``ReleaseBlocked`` with the
   reasons: the owner's decision is recorded, but nothing was released.
+- IP-01: the owner records that a released task has started or is done
+  (BAKE-33). Finishing an order's last task returns its stock deduction; a
+  repeat returns the same deduction without lowering stock again. A change
+  that is not allowed now (for example a task paused by a revised plan) is a
+  409 that says why, and nothing changes.
 - BAKE-37 [O1]: stock levels also give each ingredient's reorder level and,
   when it is low, the suggested reorder; reading them never calls a model.
   The owner changes a reorder level for the version they saw (409 if it
@@ -53,11 +58,13 @@ from app.inventory_production.inventory import (
     StockReceipt,
 )
 from app.inventory_production.low_stock import LowStockExplainer
+from app.inventory_production.progress import ProgressOutcome, ProgressRefused, TaskProgress
 from app.inventory_production.release import ScheduleRelease, ScheduleView, VersionView
 from app.inventory_production.scheduling import PlanOutcome, PlanStatus, ProductionPlanner
 from app.inventory_production.shortages import ShortageExplainer
 from app.llm.gateway import LLMCallFailed, LLMGateway
 from app.shared import AlreadyDecided, ApprovalNotRequested, NotTheOwner
+from app.shared.records import TaskStatus
 from app.shared.store import RecordNotFound, StaleVersionError, StoreError, ValidatedRecordStore
 
 SOURCE_LABELS = {"Invoice": "Invoice", "DeliveryNote": "Delivery note"}
@@ -136,6 +143,39 @@ class DecisionBody(BaseModel):
     version: int = Field(ge=1)
     # Withheld leaves the version pending (UC-04 7b); it records no decision.
     decision: Literal["Approved", "Withheld"]
+
+
+class ProgressBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Started or done; the order's last task done also deducts its stock (IP-01).
+    status: Literal["InProgress", "Completed"]
+
+
+def progress_json(outcome: ProgressOutcome) -> dict:
+    deduction = outcome.deduction
+    return {
+        "taskId": str(outcome.task_id),
+        "status": outcome.task_status,
+        "order": outcome.order_ref.to_json(),
+        "orderStatus": outcome.order_status,
+        "deduction": None if deduction is None else {
+            "id": str(deduction.deduction_id),
+            "scheduleVersion": deduction.schedule_version,
+            "deductedAt": deduction.deducted_at.isoformat(),
+            "lines": [
+                {
+                    "itemId": str(line.item_id),
+                    "ingredient": line.ingredient,
+                    "unit": line.unit,
+                    "quantity": str(line.quantity),
+                    # Stock on hand now.
+                    "onHand": str(line.on_hand),
+                }
+                for line in deduction.lines
+            ],
+        },
+        "replayed": outcome.replayed,
+    }
 
 
 def plan_json(outcome: PlanOutcome) -> dict:
@@ -307,7 +347,7 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
         try:
             quantity = Decimal(body.quantity)
         except InvalidOperation:
-            quantity = body.quantity  # reported by validation as "must be a Decimal"
+            quantity = body.quantity  # reported by validation as "must be a number"
         receipt = ReceiptInput(
             item_id=body.itemId,
             quantity=quantity,
@@ -398,5 +438,23 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
             "schedule": outcome.schedule_ref.to_json(),
             "problems": list(outcome.problems),
         }
+
+    @router.post("/api/schedules/{schedule_id}/tasks/{task_id}/progress")
+    def record_progress(
+        schedule_id: uuid.UUID, task_id: uuid.UUID, body: ProgressBody, owner: Identity = Depends(require_owner)
+    ):
+        try:
+            outcome = TaskProgress(actual_store()).record(
+                schedule_id, task_id, TaskStatus(body.status), actor_id=owner.user_id
+            )
+        except RecordNotFound:
+            raise HTTPException(404, "Task not found.") from None
+        except ProgressRefused as exc:
+            raise HTTPException(409, str(exc)) from None
+        except (StoreError, SQLAlchemyError):
+            raise HTTPException(
+                503, "The progress could not be saved. Nothing was changed; please retry."
+            ) from None
+        return progress_json(outcome)
 
     return router

@@ -1,14 +1,14 @@
 """BAKE-37 saved AI operations [R5].
 
 Revision ID: bake37_ai_requests
-Revises: bake32_receipts
+Revises: bake33_deductions
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "bake37_ai_requests"
-down_revision = "bake32_receipts"
+down_revision = "bake33_deductions"
 branch_labels = None
 depends_on = None
 
