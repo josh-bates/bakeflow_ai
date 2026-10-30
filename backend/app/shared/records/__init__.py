@@ -29,6 +29,7 @@ from app.shared.records.production import (
     ShoppingList,
 )
 from app.shared.records.receipts import InventoryReceipt
+from app.shared.records.referrals import OwnerReferral
 
 __all__ = [
     "ApprovalDecision",
@@ -44,6 +45,7 @@ __all__ = [
     "InventoryReceipt",
     "MarketingContent",
     "Order",
+    "OwnerReferral",
     "OrderItem",
     "OrderStatus",
     "ProductionSchedule",

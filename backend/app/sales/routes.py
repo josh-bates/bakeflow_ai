@@ -12,8 +12,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.config import Settings
 from app.db.session import get_sessionmaker
 from app.llm.gateway import LLMGateway, MockLLMClient, LLMCallFailed
-from app.sales.fixtures import mock_for
+from app.sales.referral_fixtures import mock_with_referrals as mock_for
 from app.sales.tracking import explain_record
+from app.sales.referrals import ReferralIntake
 from app.sales.intake import CustomerIdentity, IntakeError, OrderIntake
 from app.shared.records import Order, Product
 from app.shared.store import StoreError, ValidatedRecordStore
@@ -59,7 +60,7 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
         if message:
             client = (client_factory(message) if client_factory else
                       mock_for(message) if settings.llm_mode == "mock" else LLMGateway.from_environment())
-        return OrderIntake(actual_store, client, secret)
+        return ReferralIntake(actual_store, client, secret)
 
     def fail(exc: Exception):
         if isinstance(exc, AIOperationFailed):

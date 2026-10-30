@@ -8,6 +8,7 @@ import {
   type Submission,
   type DraftReceipt,
 } from "../api/client";
+import { OwnerReviews } from "../components/OwnerReviews";
 import { Notice } from "../components/Notice";
 
 export function CustomerPage({
@@ -291,6 +292,7 @@ export function CustomerPage({
           </div>
         )}
       </section>
+      <OwnerReviews session={session} refreshKey={result} onExpired={onExpired} />
     </>
   );
 }
