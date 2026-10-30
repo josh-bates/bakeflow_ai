@@ -80,7 +80,7 @@ beforeEach(() => {
 
 it("shows the version under review beside the released one, with server times as given", async () => {
   render(<App />);
-  const plan = await screen.findByRole("region", { name: /Plan 5c1d2e3f · 2026-11-05/ });
+  const plan = await screen.findByRole("region", { name: /Thursday 5 November 2026/ });
   expect(within(plan).getByText("Awaiting your approval")).toBeInTheDocument();
   expect(within(plan).getByText(/version 1 stays in use until this one is released/)).toBeInTheDocument();
   const [latest, released] = within(plan).getAllByRole("table");
@@ -112,7 +112,7 @@ it("refuses a plan list with a task time that is not text", async () => {
 
 it("offers progress only on the released version's tasks", async () => {
   render(<App />);
-  const plan = await screen.findByRole("region", { name: /Plan 5c1d2e3f · 2026-11-05/ });
+  const plan = await screen.findByRole("region", { name: /Thursday 5 November 2026/ });
   const [latest, released] = within(plan).getAllByRole("table");
   expect(within(latest).queryByRole("button")).not.toBeInTheDocument();
   // The bake has started, so it can only be marked done; the finish can also start.

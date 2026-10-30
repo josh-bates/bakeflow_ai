@@ -10,6 +10,7 @@ import {
   type Session,
   type TaskProgress,
 } from "../api/client";
+import { AiMark } from "../components/AiMark";
 import { Notice } from "../components/Notice";
 
 // UC-04 (BAKE-20, BAKE-21): the owner asks for a production plan, reviews its
@@ -24,11 +25,17 @@ const STATES: Record<Schedule["state"], string> = {
   NeedsRevision: "Needs revision",
   Approved: "Approved · released",
 };
+const LIDS: Record<Schedule["state"], { tone: string; label: string }> = {
+  Draft: { tone: "", label: "Draft plan" },
+  AwaitingApproval: { tone: "blush", label: "Needs your decision" },
+  NeedsRevision: { tone: "apricot", label: "Needs a revised plan" },
+  Approved: { tone: "mint", label: "In the kitchen" },
+};
+const STEPS = ["Ask for a plan", "Check the tasks", "Approve and release"];
 const TASK_STATUS: Record<string, string> = { InProgress: "In progress" };
 
 const short = (id: string) => id.slice(0, 8);
 const clock = (iso: string) => iso.slice(11, 16);
-const days = (v: ScheduleVersion) => (v.startDate === v.endDate ? v.startDate : `${v.startDate} to ${v.endDate}`);
 const today = () => new Date().toLocaleDateString("en-CA");
 const failure = (err: unknown) => (err instanceof ApiError ? err.message : "The production plans could not be loaded.");
 
@@ -80,6 +87,38 @@ function progressMessage(result: TaskProgress, task: Task): Message {
   return { error: false, text: `The ${task.kind} task for order ${order} ${done}.`, items: [] };
 }
 
+// Dates are the server's calendar days, so they are formatted without a time zone shift.
+const day = (date: string, options: Intl.DateTimeFormatOptions) =>
+  new Intl.DateTimeFormat("en-AU", { ...options, timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`));
+
+function PlanDays({ version: v }: { version: ScheduleVersion }) {
+  const span: Intl.DateTimeFormatOptions = { day: "numeric", month: "long" };
+  const year = day(v.endDate, { year: "numeric" });
+  if (v.startDate !== v.endDate)
+    return (
+      <>
+        <em>{day(v.startDate, span)}</em> to <em>{day(v.endDate, span)}</em> {year}
+      </>
+    );
+  return (
+    <>
+      {day(v.startDate, { weekday: "long" })} <em>{day(v.startDate, span)}</em> {year}
+    </>
+  );
+}
+
+function duration(t: Task) {
+  const minutes = Math.round((Date.parse(t.endAt) - Date.parse(t.startAt)) / 60000);
+  const hours = Math.floor(minutes / 60);
+  return [hours > 0 && `${hours} h`, minutes % 60 > 0 && `${minutes % 60} min`].filter(Boolean).join(" ");
+}
+
+function taskCount(v: ScheduleVersion) {
+  const tasks = v.tasks.length;
+  const orders = new Set(v.tasks.map((t) => t.orderId)).size;
+  return `${tasks} ${tasks === 1 ? "task" : "tasks"} for ${orders} ${orders === 1 ? "order" : "orders"}`;
+}
+
 function Tasks({
   caption,
   version,
@@ -92,15 +131,14 @@ function Tasks({
   // Only the released version's tasks take progress.
   onProgress?: (task: Task, status: Progress) => void;
 }) {
+  const severalDays = version.startDate !== version.endDate;
   return (
     <div className="table-scroll">
-      <table>
+      <table className="tasks">
         <caption className="sr-only">{caption}</caption>
         <thead>
           <tr>
-            <th scope="col">{caption}</th>
             <th scope="col">Time</th>
-            <th scope="col">Order</th>
             <th scope="col">Task</th>
             <th scope="col">Status</th>
             {onProgress && <th scope="col">Progress</th>}
@@ -108,14 +146,22 @@ function Tasks({
         </thead>
         <tbody>
           {version.tasks.map((t) => (
-            <tr key={t.id}>
-              <th scope="row">{t.startAt.slice(0, 10)}</th>
-              <td>
+            <tr key={t.id} data-kind={t.kind}>
+              <th scope="row">
                 {clock(t.startAt)}–{clock(t.endAt)}
+                {severalDays && (
+                  <span className="task-day">{day(t.startAt.slice(0, 10), { weekday: "short", day: "numeric", month: "short" })}</span>
+                )}
+              </th>
+              <td>
+                <span className="task-name">{t.kind}</span>
+                <span className="task-span">
+                  {duration(t)} · Order {short(t.orderId)}
+                </span>
               </td>
-              <td>Order {short(t.orderId)}</td>
-              <td>{t.kind}</td>
-              <td>{TASK_STATUS[t.status] ?? t.status}</td>
+              <td>
+                <span className="badge" data-status={t.status}>{TASK_STATUS[t.status] ?? t.status}</span>
+              </td>
               {onProgress && (
                 <td>
                   <div className="actions">
@@ -183,14 +229,28 @@ export function SchedulesPage({ session }: { session: Session }) {
   const progress = (s: Schedule) => (t: Task, status: Progress) =>
     run(async () => progressMessage(await api.recordTaskProgress(s.id, t.id, status, session.csrfToken), t));
   const datesValid = Boolean(startDate && endDate && endDate >= startDate);
+  const waiting = Boolean(data?.schedules.some((s) => s.state === "AwaitingApproval"));
+  const released = Boolean(data?.schedules.some((s) => s.state === "Approved"));
+  // One step at a time: a plan waiting for a decision comes before any released one.
+  const step = waiting ? 2 : released ? 4 : 1;
 
   return (
     <>
       <section className="intro owner-intro">
-        <img className="hero-art" src="/images/chocolate-cake.jpg" alt="" aria-hidden="true" />
-        <p className="eyebrow">OWNER WORKSPACE</p>
-        <h1>Schedules</h1>
-        <p>Make room for a well-planned baking day.</p>
+        <p className="eyebrow">Inventory & production</p>
+        <h1>Production <em>schedules</em></h1>
+        <ol className="method" aria-label="How a plan is released">
+          {STEPS.map((label, index) => {
+            const number = index + 1;
+            const state = number < step ? "done" : number === step ? "now" : undefined;
+            return (
+              <li key={label} className={state} aria-current={state === "now" ? "step" : undefined}>
+                <span className="dot" aria-hidden="true">{state === "done" ? "✓" : number}</span>
+                {label}
+              </li>
+            );
+          })}
+        </ol>
       </section>
       {error && <Notice error>{error}</Notice>}
       {message && (
@@ -205,90 +265,109 @@ export function SchedulesPage({ session }: { session: Session }) {
           )}
         </Notice>
       )}
-      <section className="card plan-form" aria-labelledby="plan-title">
-        <h2 id="plan-title">Plan production</h2>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (datesValid) plan(startDate, endDate);
-          }}
-        >
-          <div className="actions">
-            <label>
-              First day
-              <input type="date" value={startDate} required disabled={busy} onChange={(e) => setStartDate(e.target.value)} />
-            </label>
-            <label>
-              Last day
-              <input type="date" value={endDate} required disabled={busy} onChange={(e) => setEndDate(e.target.value)} />
-            </label>
-          </div>
+      <div className="plan-grid">
+        <div className="plan-list">
+          {!data && !error && <Notice>Loading production plans…</Notice>}
+          {data && data.schedules.length === 0 && (
+            <section className="card">
+              <div className="empty">
+                <h3>No plans yet</h3>
+                <p>Plans you ask for will appear here for your review.</p>
+              </div>
+            </section>
+          )}
+          {data?.schedules.map((s) => (
+            <section className="card schedule" key={s.id} aria-labelledby={`plan-${s.id}`}>
+              <div className={`lid ${LIDS[s.state].tone}`}>
+                <span className="caps">{LIDS[s.state].label}</span>
+                <span className="badge" data-status={s.state}>{STATES[s.state]}</span>
+              </div>
+              <div className="plan-body">
+                <div className="plan-top">
+                  <span className="caps">Production plan · Version {s.version}</span>
+                  <button
+                    className="text-button ai"
+                    disabled={busy}
+                    onClick={() => plan(s.latest.startDate, s.latest.endDate, s.id)}
+                  >
+                    <AiMark />
+                    Request a revised plan
+                  </button>
+                </div>
+                <h2 id={`plan-${s.id}`}>
+                  <PlanDays version={s.latest} />
+                </h2>
+                <p className="field-help">
+                  {taskCount(s.latest)}
+                  {s.released && ` · version ${s.released.version} stays in use until this one is released`}. Times in{" "}
+                  {data.timeZone}.
+                </p>
+                {s.notice && <div className="notice">{s.notice}</div>}
+                <Tasks
+                  caption={`Version ${s.version}`}
+                  version={s.latest}
+                  busy={busy}
+                  onProgress={s.releasedVersion === s.version ? progress(s) : undefined}
+                />
+                {s.released && (
+                  <>
+                    <p className="caps released-title">In the kitchen · Version {s.released.version}</p>
+                    <Tasks
+                      caption={`Released version ${s.released.version}`}
+                      version={s.released}
+                      busy={busy}
+                      onProgress={progress(s)}
+                    />
+                  </>
+                )}
+                {s.state === "AwaitingApproval" && (
+                  <div className="decision">
+                    <p>Approving sends these tasks to the kitchen and sets aside their ingredients.</p>
+                    <div className="actions">
+                      <button className="secondary" disabled={busy} onClick={() => decide(s, "Withheld")}>
+                        Not yet
+                      </button>
+                      <button className="primary" disabled={busy} onClick={() => decide(s, "Approved")}>
+                        Approve and release version {s.version} <span className="arrow" aria-hidden="true">→</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+          ))}
+        </div>
+        <section className="card plan-form" aria-labelledby="plan-title">
+          <h2 id="plan-title">
+            Ask for a <em>plan</em>
+          </h2>
           <p className="field-help">
             Confirmed orders due on these days are planned. Nothing is released for production until you approve it.
           </p>
-          <button className="primary" type="submit" disabled={busy || !datesValid}>
-            {busy ? "Working…" : "Ask for a plan"}
-          </button>
-        </form>
-      </section>
-      {!data && !error && <Notice>Loading production plans…</Notice>}
-      {data && data.schedules.length === 0 && (
-        <section className="card schedule">
-          <div className="empty">
-            <h3>No plans yet</h3>
-            <p>Plans you ask for will appear here for your review.</p>
-          </div>
-        </section>
-      )}
-      {data?.schedules.map((s) => (
-        <section className="card schedule" key={s.id} aria-labelledby={`plan-${s.id}`}>
-          <div className="section-heading">
-            <h2 id={`plan-${s.id}`}>
-              Plan {short(s.id)} · {days(s.latest)}
-            </h2>
-            <span className="badge">{STATES[s.state]}</span>
-          </div>
-          <p className="field-help">
-            Version {s.version}
-            {s.released && ` · version ${s.released.version} stays in use until this one is released`}. Times in{" "}
-            {data.timeZone}.
-          </p>
-          {s.notice && <div className="notice">{s.notice}</div>}
-          <Tasks
-            caption={`Version ${s.version}`}
-            version={s.latest}
-            busy={busy}
-            onProgress={s.releasedVersion === s.version ? progress(s) : undefined}
-          />
-          {s.released && (
-            <Tasks
-              caption={`Released version ${s.released.version}`}
-              version={s.released}
-              busy={busy}
-              onProgress={progress(s)}
-            />
-          )}
-          <div className="actions">
-            {s.state === "AwaitingApproval" && (
-              <>
-                <button className="primary" disabled={busy} onClick={() => decide(s, "Approved")}>
-                  Approve and release version {s.version}
-                </button>
-                <button className="secondary" disabled={busy} onClick={() => decide(s, "Withheld")}>
-                  Not yet
-                </button>
-              </>
-            )}
-            <button
-              className="secondary"
-              disabled={busy}
-              onClick={() => plan(s.latest.startDate, s.latest.endDate, s.id)}
-            >
-              Request a revised plan
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (datesValid) plan(startDate, endDate);
+            }}
+          >
+            <div className="dates">
+              <label>
+                First day
+                <input type="date" value={startDate} required disabled={busy} onChange={(e) => setStartDate(e.target.value)} />
+              </label>
+              <label>
+                Last day
+                <input type="date" value={endDate} required disabled={busy} onChange={(e) => setEndDate(e.target.value)} />
+              </label>
+            </div>
+            {/* A plan waiting for a decision keeps the page's one primary button. */}
+            <button className={waiting ? "secondary ai" : "primary"} type="submit" disabled={busy || !datesValid}>
+              <AiMark />
+              {busy ? "Working…" : "Ask for a plan"}
             </button>
-          </div>
+          </form>
         </section>
-      ))}
+      </div>
     </>
   );
 }
