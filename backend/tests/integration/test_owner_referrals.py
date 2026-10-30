@@ -205,3 +205,35 @@ def test_other_customer_gets_same_not_found(store, service, customer, seeded):
             service.confirm(key, 1, stranger)
     with store.unit_of_work() as db:
         assert db.get(Customer, customer.customer_id) is not None
+
+
+def test_source_progress_invalidates_review_and_allows_new_request(store, service, customer, seeded):
+    with store.unit_of_work() as db:
+        order = Order(customer_id=customer.customer_id, required_at=datetime.now(UTC) + timedelta(days=7), status="InProduction")
+        store.commit(db, order, actor_id=customer.user_id, action="test.order")
+        oid = order.order_id
+    row = service.create(customer, "Refund please", kind="Refund", order_id=oid)
+    resolved = service.resolve(uuid.UUID(row["id"]), 1, seeded.owner_id, Resolution(note="Proposed handling"))
+    with store.unit_of_work() as db:
+        order = db.get(Order, oid)
+        order.status = "Completed"
+        store.commit(db, order, actor_id=seeded.owner_id, action="test.progress", expected_version=order.version)
+    with pytest.raises(IntakeError, match="order changed"):
+        service.confirm(uuid.UUID(row["id"]), resolved["version"], customer)
+    new = service.create(customer, "Refund please", kind="Refund", order_id=oid)
+    assert new["id"] != row["id"]
+
+
+def test_confirmation_rechecks_collection_time(store, service, customer, seeded, monkeypatch):
+    row = create(service, customer)
+    data = resolution(store, seeded)
+    resolved = service.resolve(uuid.UUID(row["id"]), 1, seeded.owner_id, data)
+    from app.sales import referrals
+    class Later:
+        @staticmethod
+        def now(tz):
+            return data.summary.required_at + timedelta(days=1)
+    monkeypatch.setattr(referrals, "datetime", Later)
+    with pytest.raises(IntakeError, match="future"):
+        service.confirm(uuid.UUID(row["id"]), resolved["version"], customer)
+    assert count(store, Order) == 0
