@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { App } from "../App";
+import { readableQuantity } from "../owner/InventoryPage";
 
 const response = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), {
@@ -90,12 +91,12 @@ async function fillReceipt(quantity: string, reference = "inv-1001") {
   return user;
 }
 
-it("shows on hand, committed and available stock exactly as the server gives it", async () => {
+it("shows on hand, committed and available stock in a readable form", async () => {
   render(<App />);
   const flour = await stockRow(/Flour/);
-  expect(within(flour).getByText("400.000 g")).toBeInTheDocument();
-  expect(within(flour).getByText("600.000 g")).toBeInTheDocument();
-  expect(within(flour).getByText("−200.000 g")).toBeInTheDocument();
+  expect(within(flour).getByText("400 g")).toBeInTheDocument();
+  expect(within(flour).getByText("600 g")).toBeInTheDocument();
+  expect(within(flour).getByText("−200 g")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Inventory" })).toHaveAttribute("aria-current", "page");
   expect(screen.queryByText(/This page is a placeholder/)).not.toBeInTheDocument();
 });
@@ -120,7 +121,7 @@ it("records a receipt with the CSRF token and shows the raised stock", async () 
   });
   expect(init.headers).toEqual(expect.objectContaining({ "X-CSRF-Token": "t" }));
   expect(await screen.findByText("Nothing is below its reorder level.")).toBeInTheDocument();
-  expect(within(await stockRow(/Flour/)).getByText("2900.000 g")).toBeInTheDocument();
+  expect(within(await stockRow(/Flour/)).getByText("2,900 g")).toBeInTheDocument();
   expect(screen.getByLabelText("Reference number")).toHaveValue("");
 });
 
@@ -263,4 +264,53 @@ it("refuses stock levels sent as numbers instead of decimal strings", async () =
   render(<App />);
   expect(await screen.findByText(/returned incomplete data/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Record receipt" })).not.toBeInTheDocument();
+});
+
+it("marks low rows in the stock table and offers Save only on the row being edited", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  expect(within(await stockRow(/Flour/)).getByText("Low")).toHaveAttribute("data-status", "Low");
+  expect(within(await stockRow(/Caster sugar/)).queryByText("Low")).not.toBeInTheDocument();
+  const input = await screen.findByLabelText("Reorder level for Caster sugar (g)");
+  expect(input.closest("form")).toHaveAttribute("data-edited", "false");
+  await user.type(input, "5");
+  expect(input.closest("form")).toHaveAttribute("data-edited", "true");
+});
+
+it("shows each low ingredient as a label that screen readers skip in favour of the table", async () => {
+  render(<App />);
+  await lowStock();
+  const labels = document.querySelector(".labels")!;
+  expect(labels).toHaveAttribute("aria-hidden", "true");
+  expect(labels).toHaveTextContent("Flour");
+  expect(labels).toHaveTextContent("600g");
+  expect(labels).not.toHaveTextContent("Caster sugar");
+  // Available is below zero, so the bar stays empty.
+  expect(labels.querySelector<HTMLElement>(".gauge i")).toHaveStyle({ width: "0%" });
+});
+
+it.each([
+  ["3500.000", "3,500"],
+  ["12.500", "12.5"],
+  ["12.345", "12.345"],
+  ["-200.000", "−200"],
+  ["-1234.500", "−1,234.5"],
+  ["0.000", "0"],
+  ["-0.000", "0"],
+  ["0.005", "0.005"],
+  ["100.000", "100"],
+  ["1000", "1,000"],
+  ["123456789.120", "123,456,789.12"],
+])("reads %s as %s without rounding", (value, expected) => {
+  expect(readableQuantity(value)).toBe(expected);
+});
+
+it("keeps the exact figures in the alerts table, the receipt message and the level box", async () => {
+  render(<App />);
+  const flour = within((await lowStock()).getByRole("row", { name: /Flour/ }));
+  expect(flour.getByText("−200.000 g")).toBeInTheDocument();
+  expect(screen.getByLabelText("Reorder level for Flour (g)")).toHaveValue("200.000");
+  const filled = await fillReceipt("2500");
+  await filled.click(screen.getByRole("button", { name: "Record receipt" }));
+  expect(await screen.findByText(/Flour on hand is now 2900.000 g\./)).toBeInTheDocument();
 });

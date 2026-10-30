@@ -350,3 +350,23 @@ it("refreshes tracking from the server rather than keeping the old stage", async
   expect(await screen.findByText("Recorded status: Quoted")).toBeInTheDocument();
   expect(screen.queryByText("Wait for quotation.")).not.toBeInTheDocument();
 });
+
+it("fills the request box with the mock example when asked", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(await screen.findByRole("button", { name: "Use the example" }));
+  expect(screen.getByLabelText("What would you like to order?")).toHaveValue(
+    "24 vanilla birthday cupcakes for collection on 2 Oct before 12:00, no allergy concerns",
+  );
+});
+
+it("shortens a record id in the orders table and colours the status", async () => {
+  const id = "bc1049ef-f06e-4b6f-89e6-6f93d78b000e";
+  fetchMock.mockImplementation(async (url: string) =>
+    url === "/api/session" ? response(session()) :
+    response({ orders: [{ id, status: "Confirmed", summary: "36 cupcakes", requiredAt: "2027-10-02T02:00:00Z" }] }));
+  render(<App />);
+  expect(await screen.findByRole("rowheader", { name: "bc1049ef" })).toHaveAttribute("title", id);
+  expect(screen.getByRole("button", { name: `Track order ${id}` })).toBeInTheDocument();
+  expect(screen.getByText("Confirmed")).toHaveAttribute("data-status", "Confirmed");
+});

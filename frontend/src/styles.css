@@ -158,10 +158,10 @@ button:disabled .ai-mark { background: #8f9a95; color: var(--white); }
 /* ---------- Status labels: the base look is "nothing to do" ---------- */
 .badge { --dot: var(--none-dot); display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 3px 12px 3px 10px; border: 1px solid var(--none-line); border-radius: 999px; background: var(--none-bg); font: 700 .86rem/1.2 var(--sans); white-space: nowrap; color: var(--none-ink); }
 .badge::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--dot); }
-.badge[data-status="AwaitingApproval"], .badge[data-status="Quoted"] { --dot: var(--wait-dot); border-color: var(--wait-line); background: var(--wait-bg); color: var(--wait-ink); }
-.badge[data-status="Approved"], .badge[data-status="Confirmed"], .badge[data-status="Completed"] { --dot: var(--done-dot); border-color: var(--done-line); background: var(--done-bg); color: var(--done-ink); }
-.badge[data-status="NeedsRevision"], .badge[data-status="Blocked"], .badge[data-status="Cancelled"] { --dot: var(--fail-dot); border-color: var(--fail-line); background: var(--fail-bg); color: var(--fail-ink); }
-.badge[data-status="InProgress"], .badge[data-status="InProduction"], .badge[data-status="Scheduled"] { --dot: var(--prog-dot); border-color: var(--prog-line); background: var(--prog-bg); color: var(--prog-ink); }
+.badge[data-status="AwaitingApproval"], .badge[data-status="Quoted"], .badge[data-status="Low"], .badge[data-status="Interrupted"] { --dot: var(--wait-dot); border-color: var(--wait-line); background: var(--wait-bg); color: var(--wait-ink); }
+.badge[data-status="Approved"], .badge[data-status="Confirmed"], .badge[data-status="Completed"], .badge[data-status="Succeeded"] { --dot: var(--done-dot); border-color: var(--done-line); background: var(--done-bg); color: var(--done-ink); }
+.badge[data-status="NeedsRevision"], .badge[data-status="Blocked"], .badge[data-status="Cancelled"], .badge[data-status="Failed"] { --dot: var(--fail-dot); border-color: var(--fail-line); background: var(--fail-bg); color: var(--fail-ink); }
+.badge[data-status="InProgress"], .badge[data-status="InProduction"], .badge[data-status="Scheduled"], .badge[data-status="Running"] { --dot: var(--prog-dot); border-color: var(--prog-line); background: var(--prog-bg); color: var(--prog-ink); }
 
 /* ---------- Cards and messages ---------- */
 .card { padding: 28px 32px 30px; border: 1px solid var(--line); border-radius: 4px; background: var(--white); box-shadow: var(--shadow); }
@@ -194,6 +194,7 @@ tbody tr:last-child > * { border-bottom: 0; }
 td, tbody th { font-variant-numeric: tabular-nums; }
 td .secondary { min-height: 38px; padding: 7px 14px; font-size: .86rem; letter-spacing: .06em; white-space: nowrap; }
 td .actions { align-items: center; gap: 8px; }
+td .field-help { margin: 6px 0 0; }
 
 /* ---------- Forms ---------- */
 label { display: block; margin: 0 0 8px; font: 700 .8rem/1.3 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); }
@@ -206,6 +207,8 @@ input[aria-invalid="true"] { border-color: var(--fail-ink); }
 input:disabled, select:disabled, textarea:disabled { background: #f3f1ec; }
 .inline-form { display: flex; align-items: center; gap: 8px; }
 .inline-form input { width: 7.5em; min-height: 38px; margin: 0; padding: 6px 10px; }
+/* Only the row being edited offers Save, so a table of levels isn't a wall of buttons. */
+.inline-form[data-edited="false"] button { visibility: hidden; }
 
 /* ---------- Placeholder and access pages ---------- */
 .placeholder { max-width: 760px; padding: 30px 32px; border: 1px dashed var(--line-2); box-shadow: none; }
@@ -233,7 +236,7 @@ input:disabled, select:disabled, textarea:disabled { background: #f3f1ec; }
 .customer-grid > .card { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.25fr); gap: 16px 56px; }
 .customer-grid form, .customer-grid .order-summary { grid-column: 2; }
 .customer-grid > .card > .field-help { grid-column: 2; margin: 0; }
-.request-intro { grid-row: 1 / span 3; }
+.request-intro { grid-row: 1 / span 3; position: sticky; top: 24px; align-self: start; }
 .request-intro h2 { font-size: 2.3rem; }
 .orders { margin-top: 28px; }
 .order-summary { margin-top: 24px; padding: 22px 24px; border: 1px solid #f1d3d8; border-radius: 4px; background: var(--blush-soft); }
@@ -244,10 +247,51 @@ input:disabled, select:disabled, textarea:disabled { background: #f3f1ec; }
 .order-summary li p { margin: .2rem 0; }
 .order-summary dt { margin-top: .9rem; font-weight: 800; }
 .order-summary dd { margin: .25rem 0 0; overflow-wrap: anywhere; }
+.demo-hint .text-button { min-height: 32px; padding: 0; margin-left: 4px; }
+.clarify { margin-top: 20px; padding-top: 18px; border-top: 1px solid #f1d3d8; }
+.clarify textarea { min-height: 96px; margin-top: 8px; }
+.clarify details { margin-bottom: 14px; }
+.clarify summary { font-weight: 700; cursor: pointer; }
+.clarify ol { margin: 8px 0 0; padding-left: 1.4rem; }
+.clarify > .text-button { margin-top: 10px; }
 
 /* ---------- Inventory ---------- */
+.stock-grid > .card { margin-top: 0; }
 .receipt-form .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
 .receipt-form label { margin: 0; }
+.low-stock .section-heading { align-items: flex-start; margin-bottom: 12px; }
+.low-stock .section-heading h2 { flex: 1 1 260px; margin: 0; }
+.stock-levels td { white-space: nowrap; }
+/* Pantry-jar labels: cut corners, a thin outline and an apricot fill. */
+.labels { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; margin: 16px 0 8px; }
+.etq, .etq .in { --cut: 16px; clip-path: polygon(var(--cut) 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, var(--cut) 100%, 0 calc(100% - var(--cut)), 0 var(--cut)); }
+.etq { padding: 1px; background: var(--wait-line); }
+.etq .in { height: 100%; padding: 18px 22px 16px; background: var(--apricot-soft); text-align: center; }
+.etq .name { display: flex; align-items: center; justify-content: center; gap: 12px; font: 600 1.7rem/1.1 var(--didone); font-variation-settings: "opsz" 24; }
+.etq .name::before, .etq .name::after { content: ""; flex: 0 1 26px; height: 1px; background: var(--gold-ink); }
+.etq .caps { display: block; margin-top: 12px; font-size: .73rem; color: var(--gold-ink); }
+.etq .num { display: block; margin-top: 6px; font: 600 2.7rem/1.05 var(--didone); font-variation-settings: "opsz" 24; font-variant-numeric: lining-nums; overflow-wrap: anywhere; color: var(--wait-ink); }
+.etq .num small { margin-left: 4px; font: 600 .95rem var(--sans); color: var(--muted); }
+.gauge { position: relative; height: 6px; margin: 14px 0 9px; border-radius: 999px; background: #f3e3cb; }
+.gauge i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 999px; background: var(--wait-dot); }
+.gauge b { position: absolute; top: -5px; bottom: -5px; left: 50%; width: 2px; background: var(--ink); }
+.etq .facts { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; font-size: .86rem; line-height: 1.4; color: var(--muted); font-variant-numeric: tabular-nums; }
+.etq .facts b { font-weight: 700; color: var(--ink); }
+/* A long list keeps to a smaller label so the card doesn't push the page down. */
+.labels.compact { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.labels.compact .etq, .labels.compact .in { --cut: 10px; }
+.labels.compact .in { padding: 12px 14px 10px; }
+.labels.compact .name { font-size: 1.25rem; }
+.labels.compact .name::before, .labels.compact .name::after { display: none; }
+.labels.compact .caps { margin-top: 6px; font-size: .66rem; letter-spacing: .12em; }
+.labels.compact .num { margin-top: 2px; font-size: 1.8rem; }
+.labels.compact .gauge { margin: 9px 0 6px; }
+.labels.compact .facts { flex-direction: column; align-items: center; font-size: .8rem; }
+tr.low > * { background: var(--apricot-soft); }
+tr.low > th { box-shadow: inset 4px 0 0 var(--wait-dot); }
+tr.low .badge { min-height: 24px; margin-left: 8px; padding: 1px 10px 1px 8px; font-size: .8rem; }
+.note-ai { display: flex; gap: 12px; margin-top: 18px; padding: 16px 18px; border: 1px solid #f1d3d8; border-radius: 4px; background: var(--blush-soft); }
+.note-ai p { margin: 0; overflow-wrap: anywhere; }
 
 /* ---------- Schedules ---------- */
 .method { display: flex; margin: 0; padding: 0 0 6px; list-style: none; }
@@ -305,6 +349,7 @@ input:disabled, select:disabled, textarea:disabled { background: #f3f1ec; }
   .masthead, footer { padding-left: 28px; padding-right: 28px; }
   .plan-grid { grid-template-columns: minmax(0, 1fr); }
   .plan-form { order: -1; }
+  .stock-grid .plan-form { order: 0; }
 }
 @media (max-width: 760px) {
   .topbar { padding: 10px 20px; }
@@ -331,9 +376,12 @@ input:disabled, select:disabled, textarea:disabled { background: #f3f1ec; }
   .customer-grid { padding-top: 28px; }
   .customer-grid > .card { grid-template-columns: minmax(0, 1fr); }
   .customer-grid form, .customer-grid .order-summary, .customer-grid > .card > .field-help { grid-column: 1; }
-  .request-intro { grid-row: auto; }
+  .request-intro { grid-row: auto; position: static; }
   .sign-in { margin: 28px auto; padding: 26px 22px 28px; }
   .decision .actions > * { flex: 1 1 100%; }
+  .labels.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .labels.compact .in { padding: 12px 10px 10px; }
+  .labels.compact .num { font-size: 1.45rem; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .primary, .secondary, .toc a { transition: background-color .15s; }
