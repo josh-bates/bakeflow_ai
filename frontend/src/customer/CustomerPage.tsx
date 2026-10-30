@@ -26,6 +26,9 @@ export function CustomerPage({
   const [loadError, setLoadError] = useState("");
   const [reload, setReload] = useState(0);
   const [message, setMessage] = useState("");
+  const [answers, setAnswers] = useState<string[]>([]);
+  const [answer, setAnswer] = useState("");
+  const [ended, setEnded] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Submission | null>(null);
@@ -86,6 +89,9 @@ export function CustomerPage({
     setError("");
     setResult(null);
     setSaved(null);
+    setAnswers([]);
+    setAnswer("");
+    setEnded(false);
     // Reuse the key after an uncertain response so a retry cannot create a second intake.
     if (attempt.current?.message !== text)
       attempt.current = { message: text, key: crypto.randomUUID() };
@@ -103,6 +109,27 @@ export function CustomerPage({
         setError(
           `${(e as Error).message} No draft was saved. Your text has been kept so you can try again.`,
         );
+    } finally {
+      pending.current = false;
+      setSending(false);
+    }
+  }
+
+  async function clarify(event: React.FormEvent) {
+    event.preventDefault();
+    if (pending.current || !answer.trim() || answers.length >= 8) return;
+    pending.current = true;
+    setSending(true);
+    setError("");
+    const next = [...answers, answer.trim()];
+    try {
+      const response = await api.submit(message.trim(), session.csrfToken, crypto.randomUUID(), next);
+      setResult(response);
+      setAnswers(next);
+      setAnswer("");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onExpired();
+      else setError(`${(e as Error).message} No draft was saved. Your answer has been kept so you can retry.`);
     } finally {
       pending.current = false;
       setSending(false);
@@ -167,6 +194,9 @@ export function CustomerPage({
               disabled={sending}
               onChange={(e) => {
                 setMessage(e.target.value);
+                setAnswers([]);
+                setAnswer("");
+                setEnded(false);
                 setResult(null);
                 setSaved(null);
                 setError("");
@@ -178,6 +208,7 @@ export function CustomerPage({
               Review your summary before saving a draft. A draft is not a confirmed sale and no payment is taken.
             </p>
             {error && <Notice error>{error}</Notice>}
+            {ended && <Notice>Request ended. No draft was saved.</Notice>}
             {saved && <Notice><strong>Draft saved · {saved.orderId}</strong><br />Your requirements are saved. This is not a confirmed sale.</Notice>}
             <button className="primary" type="submit" disabled={sending}>
               {sending ? "Sending request…" : "Send order request"}{" "}
@@ -203,8 +234,22 @@ export function CustomerPage({
               </dl>
               <p className="field-help">Check the full date and year. If you omitted a year, the next occurrence is shown. No draft has been saved yet.</p>
               {result.issues.length > 0 && <Notice error><ul>{result.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></Notice>}
+              {result.issues.length > 0 && <section aria-labelledby="clarification-title">
+                <h3 id="clarification-title">A few details before we continue</h3>
+                <ul>{result.questions.map(question => <li key={question}>{question}</li>)}</ul>
+                {answers.length > 0 && <details><summary>Your previous answers</summary><ol>{answers.map((text, index) => <li key={index}>{text}</li>)}</ol></details>}
+                {answers.length < 8 ? <form onSubmit={clarify}>
+                  <label htmlFor="clarification-answer">Your answer or correction</label>
+                  <textarea id="clarification-answer" value={answer} maxLength={1000} required disabled={sending} onChange={e => setAnswer(e.target.value)} />
+                  <p className="field-help">Answer the questions above. We will review your full request again; nothing is saved until you confirm a complete summary.</p>
+                  <button className="primary" disabled={sending || !answer.trim()}>{sending ? "Reviewing your answer…" : "Update my summary"}</button>
+                </form> : <p>Please use “Correct my request” to write a complete revised request, or end here.</p>}
+                <button className="text-button" disabled={sending} onClick={() => {
+                  setResult(null); setMessage(""); setAnswers([]); setAnswer(""); setError(""); setEnded(true); attempt.current = null;
+                }}>End request without saving</button>
+              </section>}
               <div className="hero-actions">
-                <button className="secondary" disabled={sending} onClick={() => { setResult(null); setError(""); document.getElementById("order-request")?.focus(); }}>Correct my request</button>
+                <button className="secondary" disabled={sending} onClick={() => { setResult(null); setAnswers([]); setAnswer(""); setError(""); document.getElementById("order-request")?.focus(); }}>Correct my request</button>
                 <button className="primary" disabled={sending || !result.confirmationToken || result.issues.length > 0} onClick={confirm}>{sending ? "Saving draft…" : "Confirm and save draft"}</button>
               </div>
             </section>

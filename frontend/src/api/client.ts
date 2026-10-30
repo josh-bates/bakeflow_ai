@@ -17,7 +17,7 @@ export type OrderSummary = {
   allergen_concerns: string[] | null;
   budget: string | null;
 };
-export type Submission = { summary: OrderSummary; issues: string[]; confirmationToken: string | null };
+export type Submission = { summary: OrderSummary; issues: string[]; questions: string[]; confirmationToken: string | null };
 export type DraftReceipt = { orderId: string; status: "Draft" };
 /** Stock quantities are decimal strings with three places, never floats (BAKE-32). */
 export type StockItem = {
@@ -27,6 +27,35 @@ export type StockItem = {
   onHand: string;
   committed: string;
   available: string;
+  /** BAKE-37: the owner's reorder level; low means available is below it. */
+  reorderLevel: string;
+  version: number;
+  low: boolean;
+  /** Brings available stock back to twice the reorder level; null unless low. */
+  suggestedReorder: string | null;
+};
+export type LowStockExplanation = {
+  status: "Explained" | "Unavailable" | "NoAlerts" | "Changed";
+  explanation: string | null;
+  notice: string | null;
+  items: StockItem[];
+};
+/** One saved AI operation (BAKE-37, architecture [R5]); it holds no prompt or reply text. */
+export type AIRequestRecord = {
+  id: string;
+  task: string;
+  subject: { recordType: string; recordId: string; version: number };
+  actor: string;
+  provider: string;
+  model: string;
+  promptVersion: string | null;
+  status: "Running" | "Succeeded" | "Failed" | "Interrupted";
+  attempts: number;
+  latencyMs: number | null;
+  lastError: string | null;
+  outcome: { attempt: number; latencyMs: number; result: "usable" | "rejected" | "error"; error?: string }[];
+  startedAt: string;
+  finishedAt: string | null;
 };
 export type ReceiptSource = "Invoice" | "DeliveryNote";
 export type ReceiptInput = {
@@ -204,6 +233,31 @@ function schedule(value: unknown): boolean {
     (value.released === null || scheduleVersion(value.released))
   );
 }
+function stockItem(i: unknown): boolean {
+  return (
+    record(i) &&
+    [i.id, i.ingredient, i.unit].every((v) => typeof v === "string") &&
+    [i.onHand, i.committed, i.available, i.reorderLevel].every(quantity) &&
+    !String(i.reorderLevel).startsWith("-") &&
+    Number.isInteger(i.version) &&
+    typeof i.low === "boolean" &&
+    (i.low ? quantity(i.suggestedReorder) : i.suggestedReorder === null)
+  );
+}
+function aiRequest(r: unknown): boolean {
+  return (
+    record(r) &&
+    ["id", "task", "actor", "provider", "model", "startedAt"].every((k) => typeof r[k] === "string") &&
+    ["Running", "Succeeded", "Failed", "Interrupted"].includes(String(r.status)) &&
+    record(r.subject) &&
+    typeof r.subject.recordType === "string" &&
+    Number.isInteger(r.attempts) &&
+    (r.latencyMs === null || Number.isInteger(r.latencyMs)) &&
+    [r.promptVersion, r.lastError, r.finishedAt].every((v) => v === null || typeof v === "string") &&
+    Array.isArray(r.outcome) &&
+    r.outcome.every((a) => record(a) && Number.isInteger(a.attempt) && typeof a.result === "string")
+  );
+}
 function deduction(value: unknown): boolean {
   return (
     record(value) &&
@@ -290,6 +344,7 @@ export const api = {
     message: string,
     csrfToken: string,
     idempotencyKey: string,
+    clarifications: string[] = [],
   ): Promise<Submission> {
     const value = await request("/order-requests", {
       method: "POST",
@@ -298,7 +353,7 @@ export const api = {
         "X-CSRF-Token": csrfToken,
         "Idempotency-Key": idempotencyKey,
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, ...(clarifications.length ? { clarifications } : {}) }),
     });
     if (
       !record(value) ||
@@ -314,7 +369,8 @@ export const api = {
       !(value.confirmationToken === null || typeof value.confirmationToken === "string")
     )
       return invalid();
-    return value as Submission;
+    if (value.questions !== undefined && (!Array.isArray(value.questions) || !value.questions.every(q => typeof q === "string"))) return invalid();
+    return { ...value, questions: value.questions ?? [] } as Submission;
   },
   async profitability(): Promise<Profitability> {
     const value = await request("/finance/profitability");
@@ -397,15 +453,38 @@ export const api = {
     if (
       !record(value) ||
       !Array.isArray(value.items) ||
-      !value.items.every(
-        (i) =>
-          record(i) &&
-          [i.id, i.ingredient, i.unit].every((v) => typeof v === "string") &&
-          [i.onHand, i.committed, i.available].every(quantity),
-      )
+      !value.items.every(stockItem)
     )
       return invalid();
     return value.items as StockItem[];
+  },
+  /** BAKE-37: changes one reorder level, for the item version the owner saw. */
+  async setReorderLevel(itemId: string, reorderLevel: string, version: number, csrfToken: string): Promise<StockItem> {
+    const value = await request(`/inventory/items/${encodeURIComponent(itemId)}/reorder-level`, {
+      ...JSON_POST(csrfToken, { reorderLevel, version }),
+      method: "PUT",
+    });
+    if (!stockItem(value)) return invalid();
+    return value as StockItem;
+  },
+  /** BAKE-37: the assistant explains the current alerts; it never changes stock or orders anything. */
+  async explainLowStock(csrfToken: string): Promise<LowStockExplanation> {
+    const value = await request("/inventory/low-stock/explanation", { ...JSON_POST(csrfToken, {}) });
+    if (
+      !record(value) ||
+      !["Explained", "Unavailable", "NoAlerts", "Changed"].includes(String(value.status)) ||
+      ![value.explanation, value.notice].every((v) => v === null || typeof v === "string") ||
+      !Array.isArray(value.items) ||
+      !value.items.every(stockItem)
+    )
+      return invalid();
+    return value as LowStockExplanation;
+  },
+  /** BAKE-37: the latest saved AI operations, newest first. */
+  async aiRequests(): Promise<AIRequestRecord[]> {
+    const value = await request("/owner/ai-requests");
+    if (!record(value) || !Array.isArray(value.requests) || !value.requests.every(aiRequest)) return invalid();
+    return value.requests as AIRequestRecord[];
   },
   /** Records a delivered ingredient; repeating the same receipt never raises stock twice. */
   async receiveStock(receipt: ReceiptInput, csrfToken: string): Promise<StockReceipt> {
