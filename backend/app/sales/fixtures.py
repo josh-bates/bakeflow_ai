@@ -17,6 +17,22 @@ def mock_for(message: str) -> MockLLMClient:
         collection = collection.replace(year=now.year + 1)
     summary = {"items": [{"product": "Vanilla cupcake", "quantity": 24, "flavour": "vanilla", "theme": "birthday"}],
                "required_at": collection.isoformat(), "collection_kind": "before", "allergen_concerns": [], "allergen_statement": "no allergy concerns", "budget": None}
+    # Exact multi-turn fixtures only; unknown replies must never fabricate an order.
+    if message.startswith('{'):
+        try:
+            conversation = json.loads(message)
+            original = conversation["original_request"].strip().casefold()
+            answers = [answer.strip().casefold() for answer in conversation["follow_up_answers"]]
+        except (ValueError, KeyError, TypeError):
+            return MockLLMClient(default_reply="No mock fixture for this input")
+        pairs = {
+            (MISSING_ALLERGY_MESSAGE.casefold(), ("no allergy concerns",)): DEMO_MESSAGE,
+            (MISSING_ALLERGY_MESSAGE.casefold(), ("not sure",)): MISSING_ALLERGY_MESSAGE,
+            (MISSING_ALLERGY_MESSAGE.casefold(), ("not sure", "no allergy concerns")): DEMO_MESSAGE,
+            (MISSING_TIME_MESSAGE.casefold(), ("collection on 2 oct before 12:00",)): DEMO_MESSAGE,
+            (UNSUPPORTED_MESSAGE.casefold(), ("24 vanilla birthday cupcakes instead",)): DEMO_MESSAGE,
+        }
+        message = pairs.get((original, tuple(answers)), "No fixture")
     message = message.strip().casefold()
     if message == MISSING_TIME_MESSAGE.casefold():
         summary["required_at"] = None
