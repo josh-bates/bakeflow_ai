@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import DBAPIError
 
 from app.shared import (
     AuditImmutableError,
@@ -282,6 +283,29 @@ def test_constraint_guard_serialises_stock_writers(store, seeded):
     assert sorted(outcomes) == ["refused", "taken"]
     with store.unit_of_work() as session:
         assert store.load(session, InventoryItem, seeded.items["Flour"]).quantity_on_hand == Decimal("400")
+
+
+def test_snapshot_reads_one_state_and_refuses_writes(store, seeded):
+    flour = seeded.items["Flour"]
+    on_hand = select(InventoryItem.quantity_on_hand).where(InventoryItem.item_id == flour)
+
+    with store.snapshot() as session:
+        first = session.scalar(on_hand)
+        with store.constraint_guard() as writer:
+            item = store.load(writer, InventoryItem, flour, lock=True)
+            item.quantity_on_hand -= 600
+            store.commit(writer, item, actor_id=seeded.owner_id, action="stock.take",
+                         expected_version=item.version, revise=True)
+        # Committed meanwhile, but the snapshot still sees what it read first.
+        assert session.scalar(on_hand) == first == Decimal("1000.000")
+
+    with pytest.raises(DBAPIError, match="read-only"):
+        with store.snapshot() as session:
+            store.commit(session, draft_order(seeded), actor_id=seeded.owner_id, action="order.draft")
+
+    with store.unit_of_work() as session:
+        assert session.scalar(on_hand) == Decimal("400.000")
+        store.commit(session, draft_order(seeded), actor_id=seeded.owner_id, action="order.draft")
 
 
 def test_unknown_record_is_not_found(store, seeded):
