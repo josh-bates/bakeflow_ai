@@ -40,6 +40,7 @@ CORE_TABLES = {
 
 # Stage 2 extension tables added by later stories (architecture §5.3).
 EXTENSION_TABLES = {
+    "workflow_transitions", "notifications",
     "inventory_receipts",
     "mock_payments",
     "order_deductions",

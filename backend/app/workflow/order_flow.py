@@ -117,6 +117,30 @@ class WorkflowService:
         self._record(subject, actor, event_type, current, requested)
         return requested
 
+    @staticmethod
+    def record_saved_order(session, order, before, *, event_id, actor_id, event_kind):
+        """Capture a persisted stage in the order's transaction [R11 / O2].
+
+        Called only by the validated store after the order was flushed. An
+        in-memory move or AI response never creates a customer notification.
+        Business services still own the guards for their transitions.
+        """
+        from sqlalchemy import select
+        from app.shared.records import Customer, WorkflowTransition
+
+        previous = before.get("status") if before else None
+        resulting = OrderStage(order.status).value
+        if previous == resulting or (before is None and resulting != "Draft"):
+            return None
+        recipient = session.scalar(select(Customer.user_id).where(
+            Customer.customer_id == order.customer_id))
+        return WorkflowTransition(
+            event_id=event_id, event_kind=event_kind,
+            order_id=order.order_id, customer_id=order.customer_id,
+            recipient_id=recipient, order_version=order.version,
+            from_state=previous, to_state=resulting, actor_id=actor_id,
+        )
+
     def run_ai_task(
         self,
         subject: RecordRef,

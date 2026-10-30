@@ -21,7 +21,8 @@ beforeEach(() => {
     .mockImplementation(async (url: string) =>
       url === "/api/session" ? response(session()) : response({ orders: [] }),
     );
-  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) => url === "/api/notifications"
+    ? Promise.resolve(response({ notifications: [] })) : fetchMock(url, init));
 });
 
 it("loads only the signed-in customer’s orders and never supplies a customer identity", async () => {
