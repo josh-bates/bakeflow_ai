@@ -49,6 +49,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(make_router(settings))
     from app.pricing_bookkeeping.routes import make_router as make_finance_router
     app.include_router(make_finance_router(settings))
+    from app.pricing_bookkeeping.quote_routes import make_router as make_quote_router
+    app.include_router(make_quote_router(settings))
 
     # Registered last so that every /api route above takes precedence.
     _serve_frontend(app, settings.frontend_dist)

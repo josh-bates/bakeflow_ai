@@ -92,6 +92,42 @@ export type PlanResult = {
 };
 export type ReleaseResult = { status: "Released" | "ReleaseBlocked" | "Withheld"; problems: string[] };
 
+/** UC-05 quotes (BAKE-23). Money is a decimal string, never a float. */
+export type OwnerQuote = {
+  id: string;
+  version: number;
+  orderId: string;
+  materialCost: string;
+  labourCost: string;
+  packagingCost: string;
+  additionalCost: string;
+  targetMargin: string;
+  total: string;
+  customerDecision: "Pending" | "Accepted" | "Rejected";
+  requiresManualReview: boolean;
+  explanation: string | null;
+};
+export type QuoteApproval = "Pending" | "Approved" | "Withheld";
+export type QuoteQueueItem = {
+  orderId: string;
+  summary: string;
+  requiredAt: string;
+  orderStatus: string;
+  /** The order has a stock check for its current version, so it can be priced. */
+  ready: boolean;
+  approval: QuoteApproval | null;
+  quote: OwnerQuote | null;
+};
+/** What the customer sees: the price to accept, not the bakery's costs. */
+export type CustomerQuote = {
+  id: string;
+  version: number;
+  orderId: string;
+  total: string;
+  customerDecision: "Pending" | "Accepted" | "Rejected";
+};
+export type ExtraCost = { description: string; amount: string };
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -160,6 +196,33 @@ function profitLine(value: unknown): boolean {
     (value.margin === null ||
       (typeof value.margin === "string" && /^-?\d+\.\d{4}$/.test(value.margin))) &&
     Number.isInteger(value.transactions)
+  );
+}
+const DECISIONS = ["Pending", "Accepted", "Rejected"];
+function money(value: unknown): boolean {
+  return typeof value === "string" && MONEY.test(value);
+}
+function ownerQuote(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    Number.isInteger(value.version) &&
+    typeof value.orderId === "string" &&
+    ["materialCost", "labourCost", "packagingCost", "additionalCost", "total"].every((k) => money(value[k])) &&
+    typeof value.targetMargin === "string" &&
+    DECISIONS.includes(String(value.customerDecision)) &&
+    typeof value.requiresManualReview === "boolean" &&
+    (value.explanation === null || typeof value.explanation === "string")
+  );
+}
+function customerQuote(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    Number.isInteger(value.version) &&
+    typeof value.orderId === "string" &&
+    money(value.total) &&
+    DECISIONS.includes(String(value.customerDecision))
   );
 }
 function strings(value: unknown): value is string[] {
@@ -334,6 +397,63 @@ export const api = {
     if (!record(value) || !["Released", "ReleaseBlocked", "Withheld"].includes(String(value.status)) ||
         !strings(value.problems)) return invalid();
     return value as ReleaseResult;
+  },
+  /** The owner's open orders with their latest quote version (BAKE-23). */
+  async quoteQueue(): Promise<QuoteQueueItem[]> {
+    const value = await request("/finance/quotes");
+    if (
+      !record(value) ||
+      !Array.isArray(value.orders) ||
+      !value.orders.every(
+        (o) =>
+          record(o) &&
+          ["orderId", "summary", "requiredAt", "orderStatus"].every((k) => typeof o[k] === "string") &&
+          typeof o.ready === "boolean" &&
+          (o.approval === null || ["Pending", "Approved", "Withheld"].includes(String(o.approval))) &&
+          (o.quote === null || ownerQuote(o.quote)),
+      )
+    )
+      return invalid();
+    return value.orders as QuoteQueueItem[];
+  },
+  async draftQuote(orderId: string, additionalCosts: ExtraCost[], csrfToken: string): Promise<OwnerQuote> {
+    const value = await request(`/finance/orders/${encodeURIComponent(orderId)}/quotes`,
+      JSON_POST(csrfToken, { additionalCosts }));
+    if (!ownerQuote(value)) return invalid();
+    return value as OwnerQuote;
+  },
+  async reviseQuote(quote: OwnerQuote, additionalCosts: ExtraCost[], csrfToken: string): Promise<OwnerQuote> {
+    const value = await request(
+      `/finance/quotes/${encodeURIComponent(quote.id)}/versions/${quote.version}/revise`,
+      JSON_POST(csrfToken, { additionalCosts }));
+    if (!ownerQuote(value)) return invalid();
+    return value as OwnerQuote;
+  },
+  /** Approves or withholds exactly this version. A withheld version must be revised. */
+  async decideQuote(quote: OwnerQuote, decision: "approve" | "withhold", csrfToken: string): Promise<OwnerQuote> {
+    const value = await request(
+      `/finance/quotes/${encodeURIComponent(quote.id)}/versions/${quote.version}/${decision}`,
+      JSON_POST(csrfToken, {}));
+    if (!ownerQuote(value)) return invalid();
+    return value as OwnerQuote;
+  },
+  /** The approved, current quote for one of the customer's orders, or null. */
+  async customerQuote(orderId: string): Promise<CustomerQuote | null> {
+    const value = await request(`/orders/${encodeURIComponent(orderId)}/quote`);
+    if (!record(value) || !(value.quote === null || customerQuote(value.quote))) return invalid();
+    return value.quote as CustomerQuote | null;
+  },
+  async acceptQuote(quote: CustomerQuote, csrfToken: string): Promise<{ orderId: string; replayed: boolean }> {
+    const value = await request(
+      `/quotes/${encodeURIComponent(quote.id)}/versions/${quote.version}/accept`, JSON_POST(csrfToken, {}));
+    if (!record(value) || typeof value.orderId !== "string" || typeof value.replayed !== "boolean") return invalid();
+    return value as { orderId: string; replayed: boolean };
+  },
+  async rejectQuote(quote: CustomerQuote, csrfToken: string): Promise<CustomerQuote> {
+    const value = await request(
+      `/quotes/${encodeURIComponent(quote.id)}/versions/${quote.version}/reject`, JSON_POST(csrfToken, {}));
+    if (!customerQuote(value)) return invalid();
+    return value as CustomerQuote;
   },
   async confirm(confirmationToken: string, csrfToken: string): Promise<DraftReceipt> {
     const value = await request("/order-requests/confirm", {

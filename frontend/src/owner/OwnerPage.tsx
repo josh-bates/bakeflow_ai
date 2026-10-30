@@ -1,4 +1,5 @@
 import type { Session } from "../api/client";
+import { ApprovalsPage } from "./ApprovalsPage";
 import { FinancePage } from "./FinancePage";
 import { InventoryPage } from "./InventoryPage";
 import { SchedulesPage } from "./SchedulesPage";
@@ -7,8 +8,7 @@ export const ownerPages = {
   approvals: {
     title: "Pending approvals",
     description: "Review the decisions that need your attention.",
-    detail:
-      "Quotations, production plans and marketing content will appear here for review of their current version.",
+    detail: "",
   },
   orders: {
     title: "Orders",
@@ -35,6 +35,7 @@ export const ownerPages = {
 export type OwnerPageName = keyof typeof ownerPages;
 
 export function OwnerPage({ page, session }: { page: OwnerPageName; session: Session }) {
+  if (page === "approvals") return <ApprovalsPage session={session} />;
   if (page === "finance") return <FinancePage />;
   if (page === "inventory") return <InventoryPage session={session} />;
   if (page === "schedules") return <SchedulesPage session={session} />;
