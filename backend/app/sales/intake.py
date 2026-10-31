@@ -219,6 +219,8 @@ class OrderIntake(WorkflowService):
 
     def confirm(self, customer: CustomerIdentity, token: str) -> dict:
         payload = self.tokens.read(token, customer)
+        if payload.get("purpose") is not None or "summary" not in payload:
+            raise IntakeError("SUMMARY_EXPIRED", "Please review a new order summary before confirming.")
         summary = OrderInterpretation.model_validate(payload["summary"])
         order_id = uuid.UUID(payload["id"])
         # Customer row lock serialises repeat confirmations, including concurrent retries.

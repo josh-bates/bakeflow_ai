@@ -10,6 +10,10 @@ import {
   type CustomerQuote,
   type Payment,
 } from "../api/client";
+import { OrderChanges } from "./OrderChanges";
+import { Notifications } from "./Notifications";
+import "./notifications.css";
+import { OwnerReviews } from "../components/OwnerReviews";
 import { Notice } from "../components/Notice";
 
 const EXAMPLE = "24 vanilla birthday cupcakes for collection on 2 Oct before 12:00, no allergy concerns";
@@ -276,6 +280,7 @@ export function CustomerPage({
           <figcaption><span>A MOMENT OF SWEETNESS</span><span>01 / Chocolate</span></figcaption>
         </figure>
       </section>
+      <Notifications refresh={reload} onExpired={onExpired} />
       <div className="customer-grid">
         <section className="card" aria-labelledby="request-title">
           <div className="request-intro">
@@ -467,6 +472,8 @@ export function CustomerPage({
           </div>
         )}
       </section>
+      <OrderChanges orders={orders} session={session} onExpired={onExpired} onChanged={() => setReload(n => n + 1)} />
+      <OwnerReviews session={session} refreshKey={result} onExpired={onExpired} showRequestForm={false} />
     </>
   );
 }

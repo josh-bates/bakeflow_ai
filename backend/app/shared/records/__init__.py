@@ -25,6 +25,8 @@ from app.shared.records.catalogue import InventoryItem, Product, Recipe, RecipeI
 from app.shared.records.deductions import OrderDeduction, OrderDeductionLine
 from app.shared.records.finance import MockPayment, Quote, Transaction
 from app.shared.records.marketing import Campaign, CampaignProduct, MarketingContent
+from app.shared.records.order_changes import OrderChangeRequest
+from app.shared.records.notifications import Notification, WorkflowTransition
 from app.shared.records.orders import Order, OrderItem
 from app.shared.records.production import (
     ProductionSchedule,
@@ -33,6 +35,7 @@ from app.shared.records.production import (
     ShoppingList,
 )
 from app.shared.records.receipts import InventoryReceipt
+from app.shared.records.referrals import OwnerReferral
 
 __all__ = [
     "AIRequest",
@@ -49,7 +52,11 @@ __all__ = [
     "InventoryItem",
     "InventoryReceipt",
     "MarketingContent",
+    "OrderChangeRequest",
+    "Notification",
+    "WorkflowTransition",
     "Order",
+    "OwnerReferral",
     "OrderDeduction",
     "OrderDeductionLine",
     "OrderItem",

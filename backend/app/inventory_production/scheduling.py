@@ -315,6 +315,9 @@ class ProductionPlanner(WorkflowService):
                     order = self.store.load(
                         session, Order, candidate.ref.record_id, version=candidate.ref.version, lock=True
                     )
+                    from app.sales.changes import pending_change
+                    if pending_change(session, order.order_id):
+                        return refused(f"{label} has a pending order change; request a new plan after review.")
                     if order.status != candidate.status:
                         return refused(f"{label} is now {order.status}. Request a new plan.")
                     needs[order.order_id] = self.inventory.calculate_needs(session, order)
@@ -429,6 +432,10 @@ class ProductionPlanner(WorkflowService):
         accepted: dict[uuid.UUID, dict[uuid.UUID, Decimal]] = {}
         for order in orders:
             ref = self.store.ref(order)
+            from app.sales.changes import pending_change
+            if pending_change(session, order.order_id):
+                excluded.append(ExcludedOrder(ref, "It has a pending order change or owner review."))
+                continue
             if order.order_id in elsewhere:
                 excluded.append(ExcludedOrder(ref, "It is already in another released plan."))
                 continue

@@ -3,6 +3,7 @@ export type Session = {
   mode: "mock" | "live";
   csrfToken: string;
 };
+export type OrderNotification = { id: string; orderId: string; status: string; message: string; createdAt: string };
 export type Order = {
   id: string;
   summary: string;
@@ -211,7 +212,7 @@ export class ApiError extends Error {
 /** Fired after anything is saved, so the sidebar counts can catch up. */
 export const DATA_CHANGED = "bakeflow:data-changed";
 
-async function request(path: string, init: RequestInit = {}): Promise<unknown> {
+export async function request(path: string, init: RequestInit = {}): Promise<unknown> {
   let response: Response;
   try {
     response = await fetch(`/api${path}`, {
@@ -412,6 +413,14 @@ function invalid(): never {
 }
 
 export const api = {
+  async notifications(): Promise<OrderNotification[]> {
+    const value = await request("/notifications");
+    if (!record(value) || !Array.isArray(value.notifications) ||
+        !value.notifications.every(n => record(n) &&
+          [n.id, n.orderId, n.status, n.message, n.createdAt].every(v => typeof v === "string") &&
+          Number.isFinite(Date.parse(String(n.createdAt))))) return invalid();
+    return value.notifications as OrderNotification[];
+  },
   async login(email: string, password: string): Promise<void> {
     try {
       await request("/auth/login", { method: "POST", headers: {
