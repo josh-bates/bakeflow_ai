@@ -234,7 +234,7 @@ it("lets an owner navigate live order reviews and remaining placeholder pages", 
   }
   // Only the session and the sidebar's counts: the placeholder page itself asks for nothing.
   const urls = new Set(fetchMock.mock.calls.map(([url]) => url));
-  expect(urls).toEqual(new Set(["/api/session", "/api/finance/quotes", "/api/inventory/items", "/api/schedules"]));
+  expect(urls).toEqual(new Set(["/api/session", "/api/finance/quotes", "/api/inventory/items", "/api/schedules", "/api/marketing/campaigns"]));
 });
 
 it("rejects a malformed successful response rather than showing fabricated orders", async () => {

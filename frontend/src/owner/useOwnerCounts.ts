@@ -27,12 +27,16 @@ export function useOwnerCounts(enabled: boolean, route: string): Counts {
         api.quoteQueue(),
         api.stock(),
         api.schedules().then((data) => data.schedules),
-      ]).then(([quotes, stock, schedules]) => {
+        api.marketingCampaigns(),
+      ]).then(([quotes, stock, schedules, campaigns]) => {
         if (request !== latest.current) return;
         setCounts({
           approvals: count(quotes, needsOwner),
           inventory: count(stock, (item) => item.low),
           schedules: count(schedules, (schedule) => schedule.state === "AwaitingApproval"),
+          marketing: campaigns.status === "fulfilled"
+            ? campaigns.value.flatMap((c) => [c, ...c.posts]).filter((item) => item.approval === "Pending").length
+            : undefined,
         });
       });
     };

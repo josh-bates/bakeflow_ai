@@ -209,6 +209,43 @@ export class ApiError extends Error {
   }
 }
 
+/** UC-07 and UC-08: one post, at its latest version. */
+export type MarketingPost = {
+  id: string;
+  version: number;
+  platform: "Instagram" | "Facebook";
+  body: string;
+  scheduledAt: string | null;
+  inCalendar: boolean;
+  optedIn: boolean;
+  approval: "Pending" | "Approved" | "Rejected" | "Withdrawn";
+  /** False once the campaign plan it was written for has been revised. */
+  planCurrent: boolean;
+  publication: { status: "Publishing" | "Published" | "Failed"; reference: string | null; publishedAt: string | null; error: string | null } | null;
+};
+export type MarketingCampaign = {
+  id: string;
+  version: number;
+  objective: string;
+  rationale: string;
+  startsAt: string;
+  endsAt: string;
+  lowConfidenceNotice: string | null;
+  approval: MarketingPost["approval"];
+  products: { id: string; name: string; indicativePrice: string | null }[];
+  posts: MarketingPost[];
+};
+export type MarketingSummary = {
+  historyStart: string;
+  historyEnd: string;
+  overall: ProfitLine;
+  topProducts: { id: string; name: string; unitsSold: number }[];
+  freeMinutes: number;
+  sufficient: boolean;
+};
+export type PublishedPost = { reference: string; channel: string; platform: string; body: string; publishedAt: string };
+export type PostPlan = { platform: MarketingPost["platform"]; scheduledAt: string };
+
 /** Fired after anything is saved, so the sidebar counts can catch up. */
 export const DATA_CHANGED = "bakeflow:data-changed";
 
@@ -400,6 +437,27 @@ function deduction(value: unknown): boolean {
     )
   );
 }
+const campaignPath = (campaign: MarketingCampaign) =>
+  `/marketing/campaigns/${encodeURIComponent(campaign.id)}/versions/${campaign.version}`;
+const postPath = (post: MarketingPost) =>
+  `/marketing/content/${encodeURIComponent(post.id)}/versions/${post.version}`;
+const APPROVALS = ["Pending", "Approved", "Rejected", "Withdrawn"];
+
+function marketingPost(value: unknown): boolean {
+  return record(value) && ["id", "platform", "body"].every((k) => typeof value[k] === "string") &&
+    typeof value.version === "number" && typeof value.inCalendar === "boolean" &&
+    typeof value.optedIn === "boolean" && typeof value.planCurrent === "boolean" &&
+    APPROVALS.includes(String(value.approval)) &&
+    (value.publication === null || (record(value.publication) && typeof value.publication.status === "string"));
+}
+
+function marketingCampaign(value: unknown): boolean {
+  return record(value) && ["id", "objective", "rationale", "startsAt", "endsAt"].every((k) => typeof value[k] === "string") &&
+    typeof value.version === "number" && APPROVALS.includes(String(value.approval)) &&
+    Array.isArray(value.products) && value.products.every((p) => record(p) && typeof p.name === "string") &&
+    Array.isArray(value.posts) && value.posts.every(marketingPost);
+}
+
 const JSON_POST = (csrfToken: string, body: unknown): RequestInit => ({
   method: "POST",
   headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
@@ -571,6 +629,64 @@ export const api = {
     return value as ReleaseResult;
   },
   /** The owner's open orders with their latest quote version (BAKE-23). */
+  async marketingSummary(planningStart: string, planningEnd: string): Promise<MarketingSummary> {
+    const query = new URLSearchParams({ planningStart, planningEnd });
+    const value = await request(`/marketing/summary?${query}`);
+    if (!record(value) || !record(value.overall) || !money(value.overall.profit) || typeof value.freeMinutes !== "number" ||
+        typeof value.sufficient !== "boolean" || !Array.isArray(value.topProducts))
+      return invalid();
+    return value as MarketingSummary;
+  },
+  async marketingCampaigns(): Promise<MarketingCampaign[]> {
+    const value = await request("/marketing/campaigns");
+    if (!record(value) || !Array.isArray(value.campaigns) || !value.campaigns.every(marketingCampaign)) return invalid();
+    return value.campaigns as MarketingCampaign[];
+  },
+  async marketingFeed(): Promise<PublishedPost[]> {
+    const value = await request("/marketing/feed");
+    if (!record(value) || !Array.isArray(value.posts) ||
+        !value.posts.every((p) => record(p) && ["reference", "channel", "platform", "body", "publishedAt"].every((k) => typeof p[k] === "string")))
+      return invalid();
+    return value.posts as PublishedPost[];
+  },
+  async planCampaign(planningStart: string, planningEnd: string, csrfToken: string): Promise<void> {
+    await request("/marketing/campaigns", JSON_POST(csrfToken, { planningStart, planningEnd }));
+  },
+  async reviseCampaign(campaign: MarketingCampaign, planningStart: string, planningEnd: string, csrfToken: string): Promise<void> {
+    await request(`${campaignPath(campaign)}/revise`, JSON_POST(csrfToken, { planningStart, planningEnd }));
+  },
+  async decideCampaign(campaign: MarketingCampaign, decision: "approve" | "reject", csrfToken: string): Promise<void> {
+    await request(`${campaignPath(campaign)}/${decision}`, JSON_POST(csrfToken, {}));
+  },
+  async writePost(campaign: MarketingCampaign, plan: PostPlan, csrfToken: string): Promise<void> {
+    await request(`${campaignPath(campaign)}/content`, JSON_POST(csrfToken, plan));
+  },
+  async revisePost(post: MarketingPost, plan: PostPlan, csrfToken: string): Promise<void> {
+    await request(`${postPath(post)}/revise`, JSON_POST(csrfToken, plan));
+  },
+  async decidePost(post: MarketingPost, decision: "approve" | "reject", csrfToken: string): Promise<void> {
+    await request(`${postPath(post)}/${decision}`, JSON_POST(csrfToken, {}));
+  },
+  async placePost(post: MarketingPost, csrfToken: string): Promise<void> {
+    await request(`${postPath(post)}/calendar`, JSON_POST(csrfToken, {}));
+  },
+  /** Refused unless this version is approved, current and in the calendar. */
+  async exportPost(post: MarketingPost): Promise<void> {
+    await request(`${postPath(post)}/export`);
+  },
+  async setPostOptIn(post: MarketingPost, optedIn: boolean, csrfToken: string): Promise<void> {
+    await request(`${postPath(post)}/opt-in`, JSON_POST(csrfToken, { optedIn }));
+  },
+  async publishPost(post: MarketingPost, csrfToken: string): Promise<void> {
+    await request(`${postPath(post)}/publish`, JSON_POST(csrfToken, {}));
+  },
+  async publishDue(csrfToken: string): Promise<{ published: number; failed: string[] }> {
+    const value = await request("/marketing/publish-due", JSON_POST(csrfToken, {}));
+    if (!record(value) || !Array.isArray(value.published) || !Array.isArray(value.failed) ||
+        !value.failed.every((f) => record(f) && typeof f.detail === "string"))
+      return invalid();
+    return { published: value.published.length, failed: value.failed.map((f) => (f as { detail: string }).detail) };
+  },
   async quoteQueue(): Promise<QuoteQueueItem[]> {
     const value = await request("/finance/quotes");
     if (

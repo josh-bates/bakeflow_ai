@@ -331,6 +331,50 @@ tr.low .badge { min-height: 24px; margin-left: 8px; padding: 1px 10px 1px 8px; f
 .transaction-form .field-help { margin: 10px 0 0; }
 .transaction-form > button { margin-top: 18px; }
 
+/* ---------- Marketing ---------- */
+.marketing-grid > .plan-form { position: sticky; top: 24px; }
+.compare { margin-bottom: 28px; }
+.compare > .field-help { margin: 6px 0 16px; }
+.compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-items: start; gap: 24px; }
+.compare-grid > .card + .card { margin-top: 0; }
+.compare-grid .plan-body h2 { font-size: 1.5rem; }
+/* Rejected plans and finished campaigns: closed until the owner looks. */
+.earlier { margin-top: 24px; }
+.earlier > summary { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 10px 4px; border-top: 1px solid var(--line-2); border-bottom: 1px solid var(--line-2); font: 800 .86rem/1.2 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); cursor: pointer; list-style: none; }
+.earlier > summary::-webkit-details-marker { display: none; }
+.earlier > summary::before { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); }
+.earlier[open] > summary::before { transform: rotate(45deg); }
+.earlier > .field-help { margin: 12px 0 0; }
+.earlier > .card { margin-top: 16px; box-shadow: none; }
+.marketing-grid > div > .card + .card { margin-top: 24px; }
+.plan-facts { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); font-size: .94rem; }
+.plan-facts h3 { margin: 0 0 8px; font-size: 1.15rem; }
+.plan-facts ul { margin: 0; padding-left: 1.1rem; }
+.plan-facts p { margin: 8px 0 0; color: var(--ink-2); }
+.featured { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; padding: 0; list-style: none; }
+.featured li { padding: 4px 12px; border: 1px solid var(--line-2); border-radius: 999px; font-size: .92rem; font-variant-numeric: tabular-nums; }
+.campaign-actions { margin-top: 18px; }
+.post-form { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.post-form .actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; }
+.post-form label { margin: 0; }
+.post-form button { grid-column: 1 / -1; justify-self: start; }
+.marketing-grid .plan-body h2 { font-size: 1.8rem; }
+.post { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.post-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.post-top h3 { margin: 0; font-size: 1.25rem; }
+.post-body { margin: 12px 0 0; padding: 14px 18px; border-left: 3px solid var(--line-2); background: var(--blush-soft); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.post > .field-help { margin: 8px 0 0; }
+.post .actions { margin-top: 14px; align-items: center; }
+.post .opt-in { display: inline-flex; align-items: center; gap: 8px; margin: 0; font: 600 .95rem/1.3 var(--sans); letter-spacing: 0; text-transform: none; }
+.post .opt-in input { width: 18px; min-height: 18px; margin: 0; padding: 0; }
+.post-export { margin-top: 14px; }
+.post-export textarea { min-height: 96px; margin-top: 8px; }
+.post-export .actions { margin-top: 10px; }
+.feed { margin: 12px 0 0; padding: 0; list-style: none; }
+.feed li { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.feed li:last-child { padding-bottom: 0; border-bottom: 0; }
+.feed p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* ---------- Schedules ---------- */
 .method { display: flex; margin: 0; padding: 0 0 6px; list-style: none; }
 .method li { position: relative; width: 148px; font-size: .94rem; font-weight: 700; line-height: 1.3; text-align: center; color: var(--muted); }
@@ -429,7 +473,7 @@ tr.low .badge { min-height: 24px; margin-left: 8px; padding: 1px 10px 1px 8px; f
   .request-intro { grid-row: auto; position: static; }
   .sign-in { margin: 28px auto; padding: 26px 22px 28px; }
   .decision .actions > * { flex: 1 1 100%; }
-  .quote-grid, .quote-extra .actions, .transaction-form .actions { grid-template-columns: minmax(0, 1fr); }
+  .quote-grid, .quote-extra .actions, .transaction-form .actions, .post-form .actions { grid-template-columns: minmax(0, 1fr); }
   .quote-card .plan-body h2 { font-size: 1.6rem; }
   .quote-grid .actions > * { flex: 1 1 100%; }
   .labels.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }

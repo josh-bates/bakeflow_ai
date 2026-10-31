@@ -53,6 +53,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(make_quote_router(settings))
     from app.pricing_bookkeeping.payment_routes import make_router as make_payment_router
     app.include_router(make_payment_router(settings))
+    from app.marketing.routes import make_router as make_marketing_router
+    app.include_router(make_marketing_router(settings))
 
     from app.sales.change_routes import make_router as make_change_router
     app.include_router(make_change_router(settings))

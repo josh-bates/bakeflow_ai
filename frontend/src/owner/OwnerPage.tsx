@@ -5,6 +5,7 @@ import { AIActivityPage } from "./AIActivityPage";
 import { ApprovalsPage } from "./ApprovalsPage";
 import { FinancePage } from "./FinancePage";
 import { InventoryPage } from "./InventoryPage";
+import { MarketingPage } from "./MarketingPage";
 import { SchedulesPage } from "./SchedulesPage";
 
 export const ownerPages = {
@@ -34,6 +35,11 @@ export const ownerPages = {
     description: "Make room for a well-planned baking day.",
     detail: "",
   },
+  marketing: {
+    title: "Marketing",
+    description: "Plan a campaign, approve every post, then publish it.",
+    detail: "",
+  },
   ai: {
     title: "AI activity",
     description: "Every assistant request, with its retries and result.",
@@ -47,6 +53,7 @@ export function OwnerPage({ page, session, onExpired }: { page: OwnerPageName; s
   if (page === "finance") return <FinancePage session={session} />;
   if (page === "inventory") return <InventoryPage session={session} />;
   if (page === "schedules") return <SchedulesPage session={session} />;
+  if (page === "marketing") return <MarketingPage session={session} />;
   if (page === "ai") return <AIActivityPage />;
   const content = ownerPages[page];
   return (
