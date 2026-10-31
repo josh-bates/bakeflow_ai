@@ -290,3 +290,37 @@ def test_a_platform_we_do_not_publish_to_is_refused(store, seeded):
 
     assert outcome.status is ContentStatus.CAMPAIGN_NOT_APPROVED
     assert contents(store) == []
+
+
+def test_a_price_inside_a_larger_amount_is_not_a_quote(store, seeded):
+    """A claim of 4.50 is not quoted by a body saying $14.50."""
+    campaign = approved_campaign(store, seeded)
+    price = price_of(store, seeded)
+    client = MockLLMClient(
+        default_reply=content_reply(
+            claims=[(seeded.products[CUPCAKE], f"{price:.2f}")],
+            body=f"Cupcakes for ${price + 10:.2f} this week!",
+        )
+    )
+
+    outcome = planner(store, client).generate(campaign, owner_id=seeded.owner_id)
+
+    assert outcome.status is ContentStatus.AI_UNAVAILABLE
+    assert contents(store) == []
+    assert any("does not quote" in problem for problem in outcome.problems)
+
+
+def test_a_price_nobody_claimed_is_refused(store, seeded):
+    campaign = approved_campaign(store, seeded)
+    price = price_of(store, seeded)
+    client = MockLLMClient(
+        default_reply=content_reply(
+            claims=[(seeded.products[CUPCAKE], f"{price:.2f}")],
+            body=f"Cupcakes for ${price:.2f}, or a dozen for $2!",
+        )
+    )
+
+    outcome = planner(store, client).generate(campaign, owner_id=seeded.owner_id)
+
+    assert outcome.status is ContentStatus.AI_UNAVAILABLE
+    assert any("not a claimed price" in problem for problem in outcome.problems)

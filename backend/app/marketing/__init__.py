@@ -26,7 +26,6 @@ from app.marketing.content import (
     ExportOutcome,
 )
 from app.marketing.summary import (
-    CLOSED_STATUSES,
     MIN_LEDGER_TRANSACTIONS,
     SOLD_STATUSES,
     BusinessSummary,
@@ -38,7 +37,6 @@ from app.marketing.summary import (
 )
 
 __all__ = [
-    "CLOSED_STATUSES",
     "LOW_CONFIDENCE_NOTICE",
     "MAX_FEATURED_PRODUCTS",
     "MIN_CONFIDENCE",

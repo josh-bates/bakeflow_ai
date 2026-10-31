@@ -10,11 +10,20 @@ const response = (value: unknown, status = 200) =>
   });
 const FLOUR = "11111111-0000-0000-0000-000000000000";
 const SUGAR = "22222222-0000-0000-0000-000000000000";
+const SUGAR_ITEM = {
+  id: SUGAR, ingredient: "Caster sugar", unit: "g", onHand: "2000.000", committed: "0.000", available: "2000.000",
+  reorderLevel: "300.000", version: 1, low: false, suggestedReorder: null as string | null,
+};
+const flourItem = (onHand: string, available: string) => {
+  const low = Number(available) < 200;
+  return {
+    id: FLOUR, ingredient: "Flour", unit: "g", onHand, committed: "600.000", available,
+    reorderLevel: "200.000", version: 3, low,
+    suggestedReorder: low ? (400 - Number(available)).toFixed(3) : null,
+  };
+};
 const stock = (flourOnHand: string, flourAvailable: string) => ({
-  items: [
-    { id: SUGAR, ingredient: "Caster sugar", unit: "g", onHand: "2000.000", committed: "0.000", available: "2000.000" },
-    { id: FLOUR, ingredient: "Flour", unit: "g", onHand: flourOnHand, committed: "600.000", available: flourAvailable },
-  ],
+  items: [SUGAR_ITEM, flourItem(flourOnHand, flourAvailable)],
 });
 const receipt = (replayed: boolean) => ({
   id: "r1",
@@ -30,6 +39,8 @@ const receipt = (replayed: boolean) => ({
 });
 let current: ReturnType<typeof stock>;
 let posted: (() => Response) | null;
+let levelSaved: () => Response;
+let explained: () => Response;
 let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   location.hash = "#/owner/inventory";
@@ -38,6 +49,18 @@ beforeEach(() => {
     current = stock("2900.000", "2300.000");
     return response(receipt(false), 201);
   };
+  levelSaved = () => {
+    const sugar = { ...SUGAR_ITEM, reorderLevel: "2500.000", version: 2, low: true, suggestedReorder: "3000.000" };
+    current = { items: [sugar, current.items[1]] };
+    return response(sugar);
+  };
+  explained = () =>
+    response({
+      status: "Explained",
+      explanation: "Flour: 400 g on hand and 600 g committed to released plans. Suggested reorder: 600 g.",
+      notice: null,
+      items: current.items.filter((i) => i.low),
+    });
   fetchMock = vi.fn().mockImplementation(async (url: string) =>
     url === "/api/session"
       ? response({ user: { displayName: "Owner", role: "Owner" }, mode: "mock", csrfToken: "t" })
@@ -45,12 +68,19 @@ beforeEach(() => {
         ? response(current)
         : url === "/api/inventory/receipts" && posted
           ? posted()
-          : response({}, 404),
+          : url === `/api/inventory/items/${SUGAR}/reorder-level`
+            ? levelSaved()
+            : url === "/api/inventory/low-stock/explanation"
+              ? explained()
+              : response({}, 404),
   );
   vi.stubGlobal("fetch", fetchMock);
 });
 
 const receiptCalls = () => fetchMock.mock.calls.filter(([url]) => url === "/api/inventory/receipts");
+const stockRow = async (name: RegExp) =>
+  within(await screen.findByRole("table", { name: "Stock levels" })).getByRole("row", { name });
+const lowStock = async () => within(await screen.findByRole("table", { name: "Low-stock alerts" }));
 
 async function fillReceipt(quantity: string, reference = "inv-1001") {
   const user = userEvent.setup();
@@ -62,7 +92,7 @@ async function fillReceipt(quantity: string, reference = "inv-1001") {
 
 it("shows on hand, committed and available stock exactly as the server gives it", async () => {
   render(<App />);
-  const flour = await screen.findByRole("row", { name: /Flour/ });
+  const flour = await stockRow(/Flour/);
   expect(within(flour).getByText("400.000 g")).toBeInTheDocument();
   expect(within(flour).getByText("600.000 g")).toBeInTheDocument();
   expect(within(flour).getByText("−200.000 g")).toBeInTheDocument();
@@ -89,8 +119,8 @@ it("records a receipt with the CSRF token and shows the raised stock", async () 
     sourceReference: "inv-1001",
   });
   expect(init.headers).toEqual(expect.objectContaining({ "X-CSRF-Token": "t" }));
-  const flour = await screen.findByRole("row", { name: /Flour/ });
-  expect(await within(flour).findByText("2900.000 g")).toBeInTheDocument();
+  expect(await screen.findByText("Nothing is below its reorder level.")).toBeInTheDocument();
+  expect(within(await stockRow(/Flour/)).getByText("2900.000 g")).toBeInTheDocument();
   expect(screen.getByLabelText("Reference number")).toHaveValue("");
 });
 
@@ -124,6 +154,108 @@ it.each(["0", "0.000", "2.5005", "-3", "1e3", "2,5"])("does not send a quantity 
   await fillReceipt(quantity);
   expect(screen.getByRole("button", { name: "Record receipt" })).toBeDisabled();
   expect(receiptCalls()).toHaveLength(0);
+});
+
+// --- BAKE-37: low-stock alerts and reorder levels ---------------------------
+
+it("lists low ingredients with the server's suggestion and explains them only when asked", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  const flour = within((await lowStock()).getByRole("row", { name: /Flour/ }));
+  expect(flour.getByText("−200.000 g")).toBeInTheDocument();
+  expect(flour.getByText("200.000 g")).toBeInTheDocument();
+  expect(flour.getByText("600.000 g")).toBeInTheDocument();
+  expect((await lowStock()).queryByRole("row", { name: /Caster sugar/ })).not.toBeInTheDocument();
+  expect(screen.getByText(/Nothing is ordered for you/)).toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/inventory/low-stock/explanation")).toBe(false);
+
+  await user.click(screen.getByRole("button", { name: "Explain these alerts" }));
+
+  expect(await screen.findByText(/Suggested reorder: 600 g\./)).toHaveTextContent(
+    "Assistant’s explanation: Flour: 400 g on hand",
+  );
+  const [, init] = fetchMock.mock.calls.find(([url]) => url === "/api/inventory/low-stock/explanation")!;
+  expect(init.method).toBe("POST");
+  expect(init.headers["X-CSRF-Token"]).toBe("t");
+});
+
+it("drops an earlier explanation once a receipt is recorded", async () => {
+  render(<App />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Explain these alerts" }));
+  expect(await screen.findByText(/Suggested reorder: 600 g\./)).toBeInTheDocument();
+
+  await fillReceipt("2500");
+  await user.click(screen.getByRole("button", { name: "Record receipt" }));
+
+  expect(await screen.findByText("Nothing is below its reorder level.")).toBeInTheDocument();
+  expect(screen.queryByText(/Suggested reorder: 600 g\./)).not.toBeInTheDocument();
+});
+
+it("keeps the alerts and shows the notice when no explanation is available", async () => {
+  const user = userEvent.setup();
+  explained = () =>
+    response({
+      status: "Unavailable",
+      explanation: null,
+      notice: "Explanation temporarily unavailable. The low-stock list is unchanged.",
+      items: current.items.filter((i) => i.low),
+    });
+  render(<App />);
+  await user.click(await screen.findByRole("button", { name: "Explain these alerts" }));
+
+  expect(
+    await screen.findByText("Explanation temporarily unavailable. The low-stock list is unchanged."),
+  ).toBeInTheDocument();
+  expect((await lowStock()).getByRole("row", { name: /Flour/ })).toBeInTheDocument();
+});
+
+it("saves a reorder level for the version the owner saw", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  const input = await screen.findByLabelText("Reorder level for Caster sugar (g)");
+  expect(input).toHaveValue("300.000");
+  expect(screen.getByRole("button", { name: "Save the reorder level for Caster sugar" })).toBeDisabled();
+  await user.clear(input);
+  await user.type(input, "2500");
+  await user.click(screen.getByRole("button", { name: "Save the reorder level for Caster sugar" }));
+
+  expect(await screen.findByText("Caster sugar reorder level is now 2500.000 g.")).toBeInTheDocument();
+  const [, init] = fetchMock.mock.calls.find(([url]) => url === `/api/inventory/items/${SUGAR}/reorder-level`)!;
+  expect(init.method).toBe("PUT");
+  expect(JSON.parse(init.body)).toEqual({ reorderLevel: "2500", version: 1 });
+  expect(init.headers["X-CSRF-Token"]).toBe("t");
+  expect((await lowStock()).getByRole("row", { name: /Caster sugar/ })).toHaveTextContent("3000.000 g");
+});
+
+it("shows the server's reason when the ingredient changed since it was loaded", async () => {
+  const user = userEvent.setup();
+  levelSaved = () =>
+    response({ detail: "This ingredient changed since you loaded it. Reload to see its current stock." }, 409);
+  render(<App />);
+  const input = await screen.findByLabelText("Reorder level for Caster sugar (g)");
+  await user.clear(input);
+  await user.type(input, "250");
+  await user.click(screen.getByRole("button", { name: "Save the reorder level for Caster sugar" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("This ingredient changed since you loaded it.");
+});
+
+it.each(["-1", "1.0005", "abc", ""])("does not save a reorder level of %j", async (level) => {
+  const user = userEvent.setup();
+  render(<App />);
+  const input = await screen.findByLabelText("Reorder level for Caster sugar (g)");
+  await user.clear(input);
+  if (level) await user.type(input, level);
+
+  expect(screen.getByRole("button", { name: "Save the reorder level for Caster sugar" })).toBeDisabled();
+  expect(input).toHaveAttribute("aria-invalid", "true");
+});
+
+it("refuses a low item without a suggested reorder", async () => {
+  current = { items: [{ ...flourItem("400.000", "-200.000"), suggestedReorder: null }] };
+  render(<App />);
+  expect(await screen.findByText(/returned incomplete data/)).toBeInTheDocument();
 });
 
 it("refuses stock levels sent as numbers instead of decimal strings", async () => {
