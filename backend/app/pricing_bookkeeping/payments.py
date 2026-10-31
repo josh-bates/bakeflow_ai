@@ -14,6 +14,10 @@ for the stored payment.
   there is never a paid payment without its income or income without a paid
   payment. A failure settles the payment as Failed and records nothing; the
   customer can then start a new payment.
+- A success is recorded only if the order is still payable and its accepted
+  quote is still the same version, accepted, current and owner-approved: the
+  same checks as ``start``. Otherwise the payment settles as Failed with the
+  reason, and no income is recorded.
 - A callback for a payment that has already settled returns the stored
   outcome (``replayed``) and records nothing, so a repeated success callback
   never doubles the income. A callback whose amount differs from the stored
@@ -88,9 +92,11 @@ class PaymentView:
     processed_at: datetime | None
     # True when a repeated start or callback returned what was already stored.
     replayed: bool = False
+    # Why a success callback was settled as Failed instead; not stored.
+    reason: str | None = None
 
     @classmethod
-    def of(cls, row: MockPayment, *, replayed: bool = False) -> PaymentView:
+    def of(cls, row: MockPayment, *, replayed: bool = False, reason: str | None = None) -> PaymentView:
         return cls(
             payment_id=row.payment_id,
             order_id=row.order_id,
@@ -101,6 +107,7 @@ class PaymentView:
             created_at=row.created_at,
             processed_at=row.processed_at,
             replayed=replayed,
+            reason=reason,
         )
 
 
@@ -195,12 +202,16 @@ class PaymentService:
             if payment.status != PaymentStatus.CREATED:
                 return PaymentView.of(payment, replayed=True)
             actor_id = _customer_user(session, order)
-            if callback.outcome == PaymentStatus.SUCCEEDED:
-                if order.status not in PAYABLE or (
-                    order.accepted_quote_id,
-                    order.accepted_quote_version,
-                ) != (payment.accepted_quote_id, payment.accepted_quote_version):
-                    raise PaymentError("CONFLICT", "the order can no longer be paid")
+            outcome, reason = callback.outcome, None
+            if outcome == PaymentStatus.SUCCEEDED:
+                # The same three conditions as start(), held at the moment money
+                # is recorded (review of #34): otherwise the payment settles as
+                # Failed, so it is closed and the customer can start again.
+                reason = self._unpayable(session, order, payment)
+                if reason:
+                    logger.warning("Payment %s settled as Failed: %s", payment.payment_id, reason)
+                    outcome = PaymentStatus.FAILED
+            if outcome == PaymentStatus.SUCCEEDED:
                 income = self.ledger.record_in(
                     session,
                     actor_id,
@@ -215,15 +226,25 @@ class PaymentService:
                     now=now,
                 )
                 payment.transaction_id = income.transaction_id
-            payment.status = callback.outcome
+            payment.status = outcome
             payment.processed_at = now
             self.store.commit(
                 session, payment, actor_id=actor_id, action=SETTLE_ACTION,
                 expected_version=payment.version, revise=True,
             )
-            return PaymentView.of(payment)
+            return PaymentView.of(payment, reason=reason)
 
     # Helpers ----------------------------------------------------------------------
+
+    def _unpayable(self, session: Session, order: Order, payment: MockPayment) -> str | None:
+        """Why ``payment`` can no longer be paid; None when it still can."""
+        try:
+            quote = self._payable_quote(session, order)
+        except PaymentError as exc:
+            return exc.message
+        if (quote.quote_id, quote.version) != (payment.accepted_quote_id, payment.accepted_quote_version):
+            return "the order's accepted quote has changed since this payment started"
+        return None
 
     def _payable_quote(self, session: Session, order: Order) -> Quote:
         """The accepted quote, if it is still current and owner-approved."""

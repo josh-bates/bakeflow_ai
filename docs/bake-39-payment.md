@@ -1,6 +1,6 @@
 # BAKE-39: local mock payment for confirmed orders
 
-> **Status: backend done (service, record, migration, API).** The customer's "Pay" button follows once BAKE-23's customer quote page exists, so this PR doesn't stack on #21.
+> **Status: backend (#34, merged), settle checks (#40) and the customer's Pay button (this PR) done.**
 
 Josh's optional feature (architecture [O3], T-PAYMENT-REPLAY). A customer pays for an order that was confirmed from an accepted, current, owner-approved quote. The payment is simulated locally: there is no bank, no card data, no keys and no real or sandbox provider. A successful payment is recorded once as income in the BAKE-24 ledger.
 
@@ -21,7 +21,7 @@ Josh's optional feature (architecture [O3], T-PAYMENT-REPLAY). A customer pays f
     - **Failure:** marks the payment Failed. No income is recorded and the order is unchanged.
     - **Repeated callbacks:** a callback for a payment that has already settled returns the stored outcome (`replayed`) and records nothing.
     - **Amount mismatch:** a callback amount that differs from the stored amount is refused (`VALIDATION_FAILED`) and nothing changes.
-    - **Order no longer payable:** a success for an order that has since been cancelled, or whose accepted quote has changed, is refused (`CONFLICT`).
+    - **No longer payable at settlement** (review of #34): a success is recorded only if the order is still payable and its accepted quote is still the same version, accepted, current and owner-approved, the same checks as `start`. Otherwise the payment settles as **Failed** with the reason (returned as `reason`), so it is closed and records no income.
     - **Locking:** the order is locked before the payment, in the same order as `start`, so concurrent callbacks run one after another.
   - `MockPaymentGateway` stands in for a provider's test mode. The customer chooses Succeeded or Failed on the mock checkout, as test card numbers do on a real sandbox. The gateway reports the **stored** amount.
 - **`LedgerService.record_in(session, ...)`**: BAKE-24's `record`, inside the caller's unit of work. `record` now calls it, and its behaviour is unchanged.
@@ -43,9 +43,13 @@ AI agents play no part in amounts or payment state.
 - **No `WorkflowService.handle(PAYMENT_CALLBACK_*)`.** Architecture §4 routes callbacks through it, but it doesn't exist yet, so the routes call `PaymentService` directly.
 - **Recorded actor:** the paying customer's account is recorded as the actor for the payment and its income, since there is no provider account.
 
-## Next
+## Customer UI and migration
 
-- **Customer UI**, once BAKE-23's customer quote page is merged: a "Pay" button on a confirmed order, the mock checkout (succeed or decline), and the payment status.
+- **Customer UI** (`frontend/src/customer/CustomerPage.tsx`): each Confirmed, Scheduled, InProduction or Completed order has **Pay**.
+  - **Paid already:** it says so, and no payment is started.
+  - **Otherwise:** it starts (or reopens) the payment and shows the amount due from the server, with **Pay $X (test)** and **Simulate a declined payment**. The page sends only the outcome: never an amount, never card details.
+  - **Declined, or a success that can't be recorded:** it says nothing was charged, gives the reason when there is one, and offers **Try again**.
+  - Tests are in `frontend/src/test/Payment.test.tsx` (5).
 - **Migration chain:** `bake39_payments` follows BAKE-23's `bake23_quote_explanation` (re-pointed after #21 merged), so Alembic keeps one head.
 
 ## Verification
@@ -63,7 +67,8 @@ AI agents play no part in amounts or payment state.
   - **an amount mismatch is rejected** and the payment stays Created;
   - a paid order cannot be paid again;
   - if the ledger fails, the payment stays unpaid, and the provider's retry then succeeds exactly once;
-  - a cancelled order is not charged by its open payment.
+  - a cancelled order is not charged by its open payment, which settles as Failed;
+  - a withdrawn approval or a newer quote version after the payment started records no income, and the payment settles as Failed.
 - **API (real sign-in and CSRF):**
   - 201 then 200 on start, and an `amount` field is refused with 422;
   - success, a replayed repeat, and 409 for a second payment;
