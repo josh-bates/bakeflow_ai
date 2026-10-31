@@ -4,7 +4,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "bake17_referrals"
-down_revision = "bake33_deductions"
+down_revision = "bake37_ai_requests"
 branch_labels = None
 depends_on = None
 

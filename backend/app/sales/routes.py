@@ -2,7 +2,7 @@
 import secrets
 import uuid
 from app.auth.access import authenticated
-from typing import Callable
+from typing import Annotated, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,7 +15,7 @@ from app.llm.gateway import LLMGateway, MockLLMClient, LLMCallFailed
 from app.sales.referral_fixtures import mock_with_referrals as mock_for
 from app.sales.tracking import explain_record
 from app.sales.referrals import ReferralIntake
-from app.sales.intake import CustomerIdentity, IntakeError, OrderIntake
+from app.sales.intake import CustomerIdentity, IntakeError, OrderIntake, conversation_text
 from app.shared.records import Order, Product
 from app.shared.store import StoreError, ValidatedRecordStore
 from app.workflow.order_flow import AIOperationFailed
@@ -38,6 +38,7 @@ def check_csrf(request: Request):
 class PreviewBody(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     message: str = Field(min_length=1, max_length=4000)
+    clarifications: list[Annotated[str, Field(min_length=1, max_length=1000)]] = Field(default_factory=list, max_length=8)
 
 
 class ConfirmBody(BaseModel):
@@ -72,7 +73,7 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
     @router.post("/api/order-requests", dependencies=[Depends(check_csrf)])
     def preview(body: PreviewBody, customer: CustomerIdentity = Depends(current_customer)):
         try:
-            return service(body.message).preview(customer, body.message)
+            return service(conversation_text(body.message, body.clarifications)).preview(customer, body.message, body.clarifications)
         except (AIOperationFailed, LLMCallFailed, IntakeError, StoreError, SQLAlchemyError) as exc:
             fail(exc)
 

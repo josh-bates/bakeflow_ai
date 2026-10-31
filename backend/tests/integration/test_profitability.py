@@ -110,3 +110,40 @@ def test_api_returns_the_summary_as_decimal_strings(store, seeded):
         "start": "2026-10-01T00:00:00+00:00", "end": "2026-10-08T00:00:00+00:00"}).json()
     assert first_week["overall"]["expenses"] == "14.96"
     assert first_week["periodStart"] == "2026-10-01T00:00:00+00:00"
+
+
+def test_api_explains_the_same_figures_and_keeps_them_when_the_explanation_fails(store, seeded):
+    """BAKE-34 (UC-06 5-7, 5a): Mock explanation of the ledger; a failed one keeps the figures."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.auth.access import Identity, require_owner
+    from app.config import Settings
+    from app.llm.gateway import MockLLMClient
+    from app.pricing_bookkeeping.routes import make_router
+
+    cupcakes = seeded.products["Vanilla cupcake"]
+    order = cupcake_order(store, seeded)
+    record(store, seeded, "R-1", "Income", "94.23", order_id=order, product_id=cupcakes)
+    record(store, seeded, "INV-2", "Expense", "50.00", days=10)
+
+    def client_for(**router_options):
+        app = FastAPI()
+        app.include_router(make_router(Settings(_env_file=None), store=store, **router_options))
+        app.dependency_overrides[require_owner] = lambda: Identity(seeded.owner_id, "Owner", "Owner", None)
+        return TestClient(app)
+
+    url = "/api/finance/profitability"
+    figures = client_for().get(url).json()
+
+    explained = client_for().post(f"{url}/explanation")
+    assert explained.status_code == 200, explained.text
+    body = explained.json()
+    assert "$44.23" in body["explanation"] and body["notice"] is None
+    assert {k: v for k, v in body.items() if k not in ("explanation", "notice")} == figures
+
+    always_wrong = client_for(client_factory=lambda f, n: MockLLMClient(default_reply="not json"))
+    failed = always_wrong.post(f"{url}/explanation").json()
+    assert (failed["explanation"], failed["notice"]) == (
+        None, "Explanation unavailable. The figures above are unchanged.")
+    assert failed["overall"] == figures["overall"]
