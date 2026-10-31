@@ -51,3 +51,5 @@ Migration order: BAKE-37 → BAKE-17 → BAKE-38 → BAKE-30. Merge PRs #45, #46
 Plan release remains atomic for the exact approved plan version. A pending amendment blocks release of a plan containing that order, but does not block unrelated plans. Silently dropping a task would release a different plan from the one the owner approved. Withdraw/resolve the request, or create and approve a replacement plan before release. Existing ingredient consumption is never reversed.
 
 BAKE-17 retains its exception proposal/acknowledgement queue; BAKE-30 handles commercial amendments and cancellation. Neither refund review route executes a refund.
+
+The customer page uses Adjust an order as the single entry point for new refund/production-change requests; the BAKE-17 queue remains visible for existing requests and intake exceptions.

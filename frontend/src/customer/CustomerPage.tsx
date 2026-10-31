@@ -466,7 +466,7 @@ export function CustomerPage({
         )}
       </section>
       <OrderChanges orders={orders} session={session} onExpired={onExpired} onChanged={() => setReload(n => n + 1)} />
-      <OwnerReviews session={session} refreshKey={result} onExpired={onExpired} />
+      <OwnerReviews session={session} refreshKey={result} onExpired={onExpired} showRequestForm={false} />
     </>
   );
 }
