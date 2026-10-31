@@ -82,6 +82,18 @@ export type ProfitLine = {
   transactions: number;
 };
 export type ExplainedProfitability = Profitability & { explanation: string | null; notice: string | null };
+/** UC-06 step 1 (BAKE-43): an owner-entered income or expense. The amount is a decimal string. */
+export type TransactionInput = {
+  kind: "Income" | "Expense";
+  amount: string;
+  sourceType: "Invoice" | "Receipt" | "Voucher";
+  sourceReference: string;
+  occurredAt: string;
+  orderId: string | null;
+};
+export type LedgerEntry = TransactionInput & { id: string; productId: string | null };
+/** A field the server asks the owner to fix (2a), such as "amount" or "source_reference". */
+export type FieldIssue = { field: string; message: string };
 export type Profitability = {
   overall: ProfitLine;
   general: ProfitLine;
@@ -189,6 +201,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** The fields to fix, when the server lists them (BAKE-24 ledger, 2a). */
+    public issues: FieldIssue[] = [],
   ) {
     super(message);
   }
@@ -214,10 +228,14 @@ async function request(path: string, init: RequestInit = {}): Promise<unknown> {
       422: "The request could not be accepted. Please check your details.",
       429: "Too many requests. Please wait before trying again.",
     };
-    if ([409, 503].includes(response.status)) {
+    if ([409, 422, 503].includes(response.status)) {
       const data = await response.json().catch(() => null);
-      if (record(data) && typeof data.detail === "string")
+      if (record(data) && typeof data.detail === "string" && response.status !== 422)
         throw new ApiError(response.status, data.detail);
+      // A 422 keeps its generic message unless it lists the fields to fix.
+      if (record(data) && typeof data.detail === "string" && Array.isArray(data.issues) &&
+          data.issues.every((i) => record(i) && typeof i.field === "string" && typeof i.message === "string"))
+        throw new ApiError(422, data.detail, data.issues as FieldIssue[]);
     }
     throw new ApiError(
       response.status,
@@ -475,6 +493,21 @@ export const api = {
       return invalid();
     if (value.questions !== undefined && (!Array.isArray(value.questions) || !value.questions.every(q => typeof q === "string"))) return invalid();
     return { ...value, questions: value.questions ?? [] } as Submission;
+  },
+  /** Records an income or expense once (BAKE-24 API); a repeated source reference is a 409. */
+  async recordTransaction(entry: TransactionInput, csrfToken: string): Promise<LedgerEntry> {
+    const value = await request("/finance/transactions", JSON_POST(csrfToken, entry));
+    if (
+      !record(value) ||
+      typeof value.id !== "string" ||
+      !["Income", "Expense"].includes(String(value.kind)) ||
+      !money(value.amount) ||
+      typeof value.sourceType !== "string" ||
+      typeof value.sourceReference !== "string" ||
+      typeof value.occurredAt !== "string"
+    )
+      return invalid();
+    return value as LedgerEntry;
   },
   async profitability(): Promise<Profitability> {
     return validProfitability(await request("/finance/profitability"));
