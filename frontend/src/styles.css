@@ -325,6 +325,12 @@ tr.low .badge { min-height: 24px; margin-left: 8px; padding: 1px 10px 1px 8px; f
 .quote-extra { margin-top: 14px; }
 .quote-extra.revise { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
 
+/* ---------- Finance ---------- */
+.transaction-form .actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.transaction-form label { margin: 0; }
+.transaction-form .field-help { margin: 10px 0 0; }
+.transaction-form > button { margin-top: 18px; }
+
 /* ---------- Schedules ---------- */
 .method { display: flex; margin: 0; padding: 0 0 6px; list-style: none; }
 .method li { position: relative; width: 148px; font-size: .94rem; font-weight: 700; line-height: 1.3; text-align: center; color: var(--muted); }
@@ -392,6 +398,8 @@ tr.low .badge { min-height: 24px; margin-left: 8px; padding: 1px 10px 1px 8px; f
   main { padding: 0 20px 44px; }
   .toc { flex-wrap: wrap; overflow-x: visible; }
   .orders tbody th { white-space: normal; overflow-wrap: anywhere; }
+  /* These tables scroll sideways, so a row's name keeps its width and whole words. */
+  .orders .money-table tbody th { min-width: 9.5em; overflow-wrap: normal; }
   /* On a phone each order is a small card, so its next step isn't scrolled out of sight. */
   .order-list, .order-list tbody, .order-list tr, .order-list tbody th, .order-list td { display: block; }
   .order-list { margin-top: 12px; }
@@ -421,7 +429,7 @@ tr.low .badge { min-height: 24px; margin-left: 8px; padding: 1px 10px 1px 8px; f
   .request-intro { grid-row: auto; position: static; }
   .sign-in { margin: 28px auto; padding: 26px 22px 28px; }
   .decision .actions > * { flex: 1 1 100%; }
-  .quote-grid, .quote-extra .actions { grid-template-columns: minmax(0, 1fr); }
+  .quote-grid, .quote-extra .actions, .transaction-form .actions { grid-template-columns: minmax(0, 1fr); }
   .quote-card .plan-body h2 { font-size: 1.6rem; }
   .quote-grid .actions > * { flex: 1 1 100%; }
   .labels.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../App";
 
 const response = (value: unknown, status = 200) =>
@@ -29,6 +29,9 @@ beforeEach(() => {
         : response({}, 404),
   );
   vi.stubGlobal("fetch", fetchMock);
+});
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 it("shows the owner the server's profit figures exactly, with the general-cost caveat", async () => {
@@ -159,6 +162,66 @@ it("reports a duplicate reference as already recorded", async () => {
 
   expect(await screen.findByText("Invoice INV-1042 is already recorded. Nothing was changed.")).toBeInTheDocument();
   expect(screen.queryByText(/of \$50.00 recorded/)).not.toBeInTheDocument();
+});
+
+it("removes the last saved message when the next save fails", async () => {
+  const replies = [
+    response({ id: "t1", kind: "Expense", amount: "50.00", sourceType: "Invoice",
+      sourceReference: "INV-1042", occurredAt: "2026-10-30T13:00:00+00:00", orderId: null, productId: null }, 201),
+    response({ detail: "Invoice INV-1042 is already recorded. Nothing was changed." }, 409),
+  ];
+  ledger(() => replies.shift()!);
+  const user = userEvent.setup();
+  render(<App />);
+  await fill(user, "50");
+  await user.click(screen.getByRole("button", { name: "Record transaction" }));
+  expect(await screen.findByText("Expense Invoice INV-1042 of $50.00 recorded.")).toBeInTheDocument();
+
+  await fill(user, "50");
+  await user.click(screen.getByRole("button", { name: "Record transaction" }));
+
+  expect(await screen.findByText(/already recorded/)).toBeInTheDocument();
+  expect(screen.queryByText(/of \$50.00 recorded/)).not.toBeInTheDocument();
+});
+
+it("ignores an explanation that was asked for before a save", async () => {
+  let finishExplaining = (_: Response) => {};
+  let loads = 0;
+  fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+    url === "/api/finance/profitability/explanation"
+      ? new Promise((resolve) => { finishExplaining = resolve; })
+      : Promise.resolve(
+          url === "/api/session"
+            ? response({ user: { displayName: "Owner", role: "Owner" }, mode: "mock", csrfToken: "t" })
+            : url === "/api/finance/profitability"
+              ? response(++loads === 1 ? profitability : { ...profitability, overall: line("94.23", "114.96", "-20.73", "-0.2200", 4) })
+              : url === "/api/finance/transactions" && init?.method === "POST"
+                ? response({ id: "t1", kind: "Expense", amount: "50.00", sourceType: "Invoice",
+                    sourceReference: "INV-1042", occurredAt: "2026-10-30T13:00:00+00:00", orderId: null, productId: null }, 201)
+                : response({}, 404),
+        ),
+  );
+  const user = userEvent.setup();
+  render(<App />);
+  await fill(user, "50");
+  await user.click(screen.getByRole("button", { name: "Explain these figures" }));
+  await user.click(screen.getByRole("button", { name: "Record transaction" }));
+  const overall = () => within(screen.getByRole("row", { name: /All transactions/ }));
+  expect(await overall().findByText("−$20.73")).toBeInTheDocument();
+
+  finishExplaining(response({ ...profitability, explanation: "Profit is $29.27.", notice: null }));
+
+  expect(await screen.findByRole("button", { name: "Explain these figures" })).toBeEnabled();
+  expect(screen.queryByText("Profit is $29.27.")).not.toBeInTheDocument();
+  expect(overall().getByText("−$20.73")).toBeInTheDocument();
+});
+
+it("defaults the date to the day the form opens, not the day the app loaded", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2031, 2, 4, 12));
+  render(<App />);
+  await screen.findByRole("row", { name: /All transactions/ });
+  expect(screen.getByLabelText("Date")).toHaveValue("2031-03-04");
 });
 
 it("never sends an invalid amount", async () => {
