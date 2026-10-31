@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, type Profitability, type ProfitLine } from "../api/client";
+import { api, ApiError, type Profitability, type ProfitLine, type Session } from "../api/client";
 import { Notice } from "../components/Notice";
 
-// UC-06 step 4 (BAKE-34): profitability from the recorded ledger. Every figure
-// comes from the server as a decimal string and is shown exactly as given.
+// UC-06 steps 4-7 (BAKE-34): profitability from the recorded ledger, and an AI
+// explanation only when the owner asks. Every figure comes from the server as
+// a decimal string and is shown exactly as given; the explanation never
+// changes them, and if it is unavailable the figures stay on screen (5a).
 
 const money = (value: string) => {
   const negative = value.startsWith("-");
@@ -48,9 +50,28 @@ function Table({ caption, rows }: { caption: string; rows: { key: string; label:
   );
 }
 
-export function FinancePage() {
+export function FinancePage({ session }: { session: Session }) {
   const [data, setData] = useState<Profitability | null>(null);
   const [error, setError] = useState("");
+  const [explanation, setExplanation] = useState<{ text: string | null; notice: string | null } | null>(null);
+  const [explaining, setExplaining] = useState(false);
+  const [explainError, setExplainError] = useState("");
+
+  async function explain() {
+    if (explaining) return;
+    setExplaining(true);
+    setExplainError("");
+    try {
+      const result = await api.explainProfitability(session.csrfToken);
+      // The explanation describes exactly these figures, so show them together.
+      setData(result);
+      setExplanation({ text: result.explanation, notice: result.notice });
+    } catch (err) {
+      setExplainError(err instanceof ApiError ? err.message : "The explanation could not be requested.");
+    } finally {
+      setExplaining(false);
+    }
+  }
 
   useEffect(() => {
     api.profitability().then(setData, (err: unknown) =>
@@ -85,6 +106,20 @@ export function FinancePage() {
                   { key: "general", label: "General (no order or product)", line: data.general },
                 ]}
               />
+              <div className="actions">
+                <button className="secondary" disabled={explaining} onClick={explain}>
+                  {explaining ? "Explaining…" : "Explain these figures"}
+                </button>
+              </div>
+              {explainError && <Notice error>{explainError}</Notice>}
+              {explanation?.text && (
+                <section className="order-summary" aria-labelledby="explanation-title">
+                  <h3 id="explanation-title">What these figures mean</h3>
+                  <p>{explanation.text}</p>
+                  <p className="field-help">Written by the assistant from the figures above, which it cannot change.</p>
+                </section>
+              )}
+              {explanation && !explanation.text && <Notice>{explanation.notice}</Notice>}
               <div className="notice">
                 Ingredient and other general costs are usually not recorded against one order, so
                 per-order and per-product margins can look higher than the bakery’s real margin. Use

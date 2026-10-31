@@ -262,6 +262,7 @@ class QuoteExplainer:
         try:
             explanation = self.workflow.run_ai_task(
                 subject, OrderStage.DRAFT, attempt, usable, actor=actor, event_type=EVENT_TYPE,
+                prompt_version=PROMPT_VERSION,
             )
         except AIOperationFailed:
             return ExplainedQuote(calc, None, requires_manual_review=True,

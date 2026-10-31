@@ -8,12 +8,15 @@ import {
   type Submission,
   type DraftReceipt,
   type CustomerQuote,
+  type Payment,
 } from "../api/client";
 import { Notice } from "../components/Notice";
 
 const EXAMPLE = "24 vanilla birthday cupcakes for collection on 2 Oct before 12:00, no allergy concerns";
 // Saved orders have long record ids; the first part is enough to tell them apart in the table.
 const shortId = (id: string) => (/^[0-9a-f]{8}-[0-9a-f-]+$/i.test(id) ? id.slice(0, 8) : id);
+// An order confirmed from an accepted quote can be paid until it is collected.
+const PAYABLE = ["Confirmed", "Scheduled", "InProduction", "Completed"];
 
 export function CustomerPage({
   session,
@@ -44,6 +47,11 @@ export function CustomerPage({
   const [quoteBusy, setQuoteBusy] = useState(false);
   const [quoteError, setQuoteError] = useState("");
   const [quoteMessage, setQuoteMessage] = useState("");
+  const [payOrder, setPayOrder] = useState("");
+  const [payment, setPayment] = useState<Payment | null>(null);
+  const [payBusy, setPayBusy] = useState(false);
+  const [payError, setPayError] = useState("");
+  const [payMessage, setPayMessage] = useState("");
   const attempt = useRef<{ message: string; key: string } | null>(null);
 
   useEffect(() => {
@@ -130,6 +138,43 @@ export function CustomerPage({
       else setQuoteError(`${(e as Error).message} Your decision was not recorded.`);
     } finally {
       setQuoteBusy(false);
+    }
+  }
+
+  // BAKE-39: a local mock payment for a confirmed order. The amount is the
+  // accepted quote's total, set by the server; no card details are asked for.
+  async function openPayment(orderId: string) {
+    setPayOrder(orderId); setPayment(null); setPayError(""); setPayMessage(""); setPayBusy(true);
+    try {
+      const paid = (await api.payments(orderId)).find(p => p.paid);
+      if (paid) setPayMessage(`Paid $${paid.amount}. Thank you!`);
+      else setPayment(await api.startPayment(orderId, session.csrfToken));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onExpired();
+      else setPayError((e as Error).message);
+    } finally {
+      setPayBusy(false);
+    }
+  }
+
+  async function pay(outcome: "Succeeded" | "Failed") {
+    if (!payment || payBusy) return;
+    setPayBusy(true); setPayError("");
+    try {
+      const settled = await api.mockCheckout(payment.id, outcome, session.csrfToken);
+      if (settled.paid) {
+        setPayMessage(`Payment of $${settled.amount} received. Thank you!`);
+        setPayment(null);
+      } else {
+        // A failed or declined payment changes nothing; the customer can try again.
+        setPayMessage(`The payment did not go through${settled.reason ? `: ${settled.reason}` : ""}. Nothing was charged.`);
+        setPayment(null);
+      }
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onExpired();
+      else setPayError(`${(e as Error).message} Nothing was charged.`);
+    } finally {
+      setPayBusy(false);
     }
   }
 
@@ -347,6 +392,22 @@ export function CustomerPage({
           </>}
           <button className="text-button" onClick={() => { setQuoteOrder(""); setQuote(null); setQuoteMessage(""); setQuoteError(""); }}>Close quote</button>
         </section>}
+        {payOrder && <section className="order-summary" aria-labelledby="pay-title" aria-live="polite">
+          <h3 id="pay-title">Payment for order {payOrder.slice(0, 8)}</h3>
+          {payBusy && <Notice>Contacting the payment service…</Notice>}
+          {payError && <Notice error>{payError}</Notice>}
+          {payMessage && <Notice>{payMessage}</Notice>}
+          {payment && <>
+            <p><strong>Amount due: ${payment.amount} (AUD)</strong></p>
+            <p className="field-help">Test mode: this is a simulated payment. No card details are needed and no money moves.</p>
+            <div className="actions">
+              <button className="primary" disabled={payBusy} onClick={() => pay("Succeeded")}>Pay ${payment.amount} (test)</button>
+              <button className="secondary" disabled={payBusy} onClick={() => pay("Failed")}>Simulate a declined payment</button>
+            </div>
+          </>}
+          {!payBusy && !payment && payMessage.startsWith("The payment did not") && <button className="secondary" onClick={() => openPayment(payOrder)}>Try again</button>}
+          <button className="text-button" onClick={() => { setPayOrder(""); setPayment(null); setPayMessage(""); setPayError(""); }}>Close payment</button>
+        </section>}
         {loading ? (
           <Notice>Loading your orders…</Notice>
         ) : loadError ? (
@@ -373,6 +434,7 @@ export function CustomerPage({
                   <th>Status</th>
                   <th>Tracking</th>
                   <th>Quote</th>
+                  <th>Payment</th>
                 </tr>
               </thead>
               <tbody>
@@ -394,6 +456,7 @@ export function CustomerPage({
                     </td>
                     <td><button className="secondary" aria-label={`Track order ${order.id}`} disabled={trackingBusy} onClick={() => track(order.id)}>Track order</button></td>
                     <td>{order.status === "Quoted" ? <button className="primary" aria-label={`View quote for order ${order.id}`} disabled={quoteBusy} onClick={() => viewQuote(order.id)}>View quote</button> : <span className="muted">—</span>}</td>
+                    <td>{PAYABLE.includes(order.status) ? <button className="secondary" aria-label={`Pay for order ${order.id}`} disabled={payBusy} onClick={() => openPayment(order.id)}>Pay</button> : <span className="muted">—</span>}</td>
                   </tr>
                 ))}
               </tbody>
