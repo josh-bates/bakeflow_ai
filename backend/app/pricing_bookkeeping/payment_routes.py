@@ -55,6 +55,8 @@ def payment_json(payment: PaymentView) -> dict:
         "paid": payment.transaction_id is not None,
         "createdAt": payment.created_at.isoformat(),
         "processedAt": payment.processed_at.isoformat() if payment.processed_at else None,
+        # Why a success could not be recorded, when the payment settled as Failed instead.
+        "reason": payment.reason,
     }
 
 

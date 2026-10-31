@@ -7,7 +7,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "bake38_notifications"
-down_revision = "bake33_deductions"
+down_revision = "bake17_referrals"
 branch_labels = None
 depends_on = None
 

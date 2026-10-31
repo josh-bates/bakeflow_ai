@@ -89,3 +89,12 @@ class MarketingContent(RowVersioned, Base):
     # [O4] A new version never inherits the opt-in; the service resets it.
     auto_publish_opt_in: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(Timestamp, default=utcnow)
+
+    def is_ready_for_export(self) -> bool:
+        """Whether this version is complete enough to publish (BAKE-36).
+
+        A post needs somewhere to go, something to say and a time to say it.
+        ``scheduled_at`` is part of the content, not a mutable field, so
+        changing it is a new version needing fresh approval [O4].
+        """
+        return bool(self.platform and self.body.strip() and self.scheduled_at)

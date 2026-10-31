@@ -29,11 +29,20 @@ From Carl's review of #20: ingredient invoices are usually general, not recorded
   - Displays the server's amounts exactly as given. The client refuses a response containing a non-string or non-2-dp amount.
   - Shows general costs next to the per-order list, with a note that per-order margins overstate profit, as Carl asked on #20.
 
-## Still to do on BAKE-34
+## Part 3: AI explanation (UC-06 steps 5-7, 5a)
 
-- **The AI explanation (UC-06 step 5, 5a)** reuses the BAKE-22 check and retry pattern, so it follows once #19 merges. If the explanation fails, the figures shown here stay visible.
+`backend/app/pricing_bookkeeping/profit_explanation.py`, built on BAKE-22's agent and check (#19):
+
+- **Only on request.** `POST /api/finance/profitability/explanation` (owner only, CSRF) returns the same figures as `GET /api/finance/profitability` plus `explanation` and `notice`. The Finance page has an "Explain these figures" button, so loading the page never waits on a model.
+- **Figures only.** `profit_figures` lists what the agent may mention: overall income, expenses, profit and margin, general income and expenses, and the top three products' income and profit, with their names. The prompt (`profit-explanation-v1`) says never to calculate, and says that product profit leaves general costs out.
+- **Checked.** `check_profit_explanation` requires `overall_profit` to be referenced. Every referenced amount must equal its figure, and every number in the narrative, with its sign, must be a listed figure; a percentage must be the margin. Numbers written in words are refused. A loss is accepted only with its minus sign.
+- **Retry and 5a.** It runs through `WorkflowService.run_ai_task` (three attempts; saved in `ai_requests` as `ProfitExplanation` with prompt version `profit-explanation-v1`). If nothing passes, the response carries the unchanged figures and "Explanation unavailable. The figures above are unchanged.", and the page keeps showing them.
+- **Mock mode** builds a consistent explanation from the figures (`fixtures.valid_profit_explanation`). Live mode uses `LLMGateway`; with no provider configured, every attempt fails and 5a applies.
+- Nothing is saved: the explanation describes the figures returned with it.
 
 ## Verification
+
+- Part 3: `tests/unit/test_profit_explanation.py` (13 tests: the figures, the Mock reply passing the check, an invented, negated or wrongly labelled number and words refused, a loss with its sign, success, failure after three attempts keeping the figures, provider errors counting as attempts, the prompt version recorded, and the prompt); the route's permissions in `tests/unit/test_profitability_routes.py`; a PostgreSQL API test of a Mock explanation and a failed one with the figures unchanged; and `FinancePage.test.tsx` (no call until asked, the CSRF token, the explanation shown, the notice on failure, the figures kept).
 
 - Part 2: `tests/unit/test_profitability_routes.py` (no session gives 401, a customer gets 403, bad periods give 422); an API test in `tests/integration/test_profitability.py` checks the exact decimal strings and a period filter; `frontend/src/test/FinancePage.test.tsx` checks that the figures render exactly and that float money is refused.
 
