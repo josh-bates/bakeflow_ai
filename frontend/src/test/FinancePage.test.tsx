@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { App } from "../App";
 
@@ -54,4 +55,33 @@ it("refuses a response with float money instead of decimal strings", async () =>
   render(<App />);
   expect(await screen.findByText(/returned incomplete data/)).toBeInTheDocument();
   expect(screen.queryByText("$29.27")).not.toBeInTheDocument();
+});
+
+it("explains the figures only when asked, and keeps them when the explanation fails", async () => {
+  let reply: Record<string, unknown> = { ...profitability, explanation: "Profit is $29.27.", notice: null };
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+    url === "/api/session"
+      ? response({ user: { displayName: "Owner", role: "Owner" }, mode: "mock", csrfToken: "t" })
+      : url === "/api/finance/profitability"
+        ? response(profitability)
+        : url === "/api/finance/profitability/explanation" && init?.method === "POST"
+          ? response(reply)
+          : response({}, 404),
+  );
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByRole("row", { name: /All transactions/ });
+  // No model call until the owner asks.
+  expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/explanation"))).toBe(false);
+
+  await user.click(screen.getByRole("button", { name: "Explain these figures" }));
+  expect(await screen.findByText("Profit is $29.27.")).toBeInTheDocument();
+  const [, init] = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/explanation"))!;
+  expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("t");
+
+  reply = { ...profitability, explanation: null, notice: "Explanation unavailable. The figures above are unchanged." };
+  await user.click(screen.getByRole("button", { name: "Explain these figures" }));
+  expect(await screen.findByText(/Explanation unavailable/)).toBeInTheDocument();
+  expect(screen.queryByText("Profit is $29.27.")).not.toBeInTheDocument();
+  expect(within(screen.getByRole("row", { name: /All transactions/ })).getByText("$29.27")).toBeInTheDocument();
 });
