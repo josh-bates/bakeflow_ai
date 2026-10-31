@@ -79,6 +79,20 @@ INGREDIENTS = (
     SeedIngredient("Cocoa powder", "g", D("500"), D("0.0150"), D("100")),
     SeedIngredient("Vanilla extract", "ml", D("100"), D("0.2000"), D("20")),
     SeedIngredient("Icing sugar", "g", D("1500"), D("0.0040"), D("300")),
+    # For the wider catalogue below: enough on hand for one batch of each.
+    SeedIngredient("Baking powder", "g", D("300"), D("0.0100"), D("50")),
+    SeedIngredient("Chocolate chips", "g", D("1000"), D("0.0200"), D("200")),
+    SeedIngredient("Rolled oats", "g", D("1000"), D("0.0040"), D("200")),
+    SeedIngredient("Cinnamon", "g", D("100"), D("0.0500"), D("20")),
+    SeedIngredient("Blueberries", "g", D("600"), D("0.0250"), D("150")),
+    SeedIngredient("Strawberries", "g", D("800"), D("0.0150"), D("200")),
+    SeedIngredient("Lemons", "each", D("12"), D("0.6000"), D("4")),
+    SeedIngredient("Carrots", "g", D("1000"), D("0.0030"), D("200")),
+    SeedIngredient("Walnuts", "g", D("500"), D("0.0300"), D("100")),
+    SeedIngredient("Cream", "ml", D("1500"), D("0.0050"), D("300")),
+    SeedIngredient("Cream cheese", "g", D("2000"), D("0.0150"), D("400")),
+    SeedIngredient("Digestive biscuits", "g", D("500"), D("0.0080"), D("100")),
+    SeedIngredient("Red food colouring", "ml", D("100"), D("0.1000"), D("20")),
 )
 
 PRODUCTS = (
@@ -105,6 +119,58 @@ PRODUCTS = (
         (("Flour", D("400")), ("Cocoa powder", D("80")), ("Caster sugar", D("420")),
          ("Butter", D("300")), ("Eggs", D("6")), ("Milk", D("250")),
          ("Icing sugar", D("500"))),
+    ),
+    SeedProduct(
+        "Red velvet cupcake", "cupcake", D("4"), D("0.25"), 12,
+        (("Flour", D("280")), ("Cocoa powder", D("15")), ("Caster sugar", D("220")),
+         ("Butter", D("150")), ("Eggs", D("2")), ("Milk", D("200")),
+         ("Red food colouring", D("15")), ("Cream cheese", D("200")), ("Icing sugar", D("250"))),
+    ),
+    SeedProduct(
+        "Blueberry muffin", "muffin", D("3"), D("0.20"), 12,
+        (("Flour", D("300")), ("Caster sugar", D("180")), ("Butter", D("100")),
+         ("Eggs", D("2")), ("Milk", D("200")), ("Blueberries", D("200")), ("Baking powder", D("10"))),
+    ),
+    SeedProduct(
+        "Chocolate chip cookie", "cookie", D("1.5"), D("0.10"), 24,
+        (("Flour", D("400")), ("Butter", D("225")), ("Caster sugar", D("200")), ("Eggs", D("2")),
+         ("Chocolate chips", D("300")), ("Vanilla extract", D("5")), ("Baking powder", D("5"))),
+    ),
+    SeedProduct(
+        "Oatmeal cookie", "cookie", D("1.5"), D("0.10"), 24,
+        (("Flour", D("200")), ("Rolled oats", D("250")), ("Butter", D("200")),
+         ("Caster sugar", D("220")), ("Eggs", D("2")), ("Cinnamon", D("5"))),
+    ),
+    SeedProduct(
+        "Chocolate brownie", "slice", D("2.5"), D("0.15"), 16,
+        (("Flour", D("150")), ("Cocoa powder", D("80")), ("Caster sugar", D("350")),
+         ("Butter", D("250")), ("Eggs", D("4")), ("Chocolate chips", D("150"))),
+    ),
+    SeedProduct(
+        "Scone", "scone", D("2"), D("0.15"), 12,
+        (("Flour", D("450")), ("Butter", D("100")), ("Caster sugar", D("50")),
+         ("Milk", D("250")), ("Baking powder", D("20")), ("Eggs", D("1"))),
+    ),
+    SeedProduct(
+        "Lemon tart", "tart", D("60"), D("2.50"), 1,
+        (("Flour", D("250")), ("Butter", D("150")), ("Caster sugar", D("250")),
+         ("Eggs", D("5")), ("Lemons", D("4")), ("Cream", D("200"))),
+    ),
+    SeedProduct(
+        "Baked cheesecake", "cake", D("75"), D("3.50"), 1,
+        (("Digestive biscuits", D("250")), ("Butter", D("100")), ("Cream cheese", D("750")),
+         ("Caster sugar", D("200")), ("Eggs", D("4")), ("Cream", D("200")), ("Vanilla extract", D("10"))),
+    ),
+    SeedProduct(
+        "Carrot cake", "cake", D("90"), D("3.50"), 1,
+        (("Flour", D("300")), ("Caster sugar", D("250")), ("Butter", D("200")), ("Eggs", D("4")),
+         ("Carrots", D("300")), ("Walnuts", D("100")), ("Cinnamon", D("10")), ("Baking powder", D("10")),
+         ("Cream cheese", D("300")), ("Icing sugar", D("200"))),
+    ),
+    SeedProduct(
+        "Strawberry shortcake", "cake", D("90"), D("3.50"), 1,
+        (("Flour", D("300")), ("Caster sugar", D("250")), ("Butter", D("150")), ("Eggs", D("5")),
+         ("Cream", D("400")), ("Strawberries", D("400")), ("Vanilla extract", D("10"))),
     ),
 )
 

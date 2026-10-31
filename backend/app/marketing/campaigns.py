@@ -123,7 +123,8 @@ class MarketingAgent:
             "values listed in products. Prefer products that sold well and that the bakery "
             "has the ingredients and the free production time to make more of. Consider any "
             "seasonal event that falls in the planning dates. Set starts_at and ends_at "
-            "inside the planning dates, with starts_at before ends_at, as ISO 8601 times "
+            "inside the planning dates: no earlier than planning.earliest_start and no later "
+            "than planning.latest_end, with starts_at before ends_at, as ISO 8601 times "
             "with a numeric UTC offset. Every figure you mention must be copied exactly from "
             "the summary: do not add up, convert or invent any number. If data_sufficient is "
             "false, say plainly in the rationale that the suggestion is general because there "
@@ -201,6 +202,9 @@ class CampaignPlanner(WorkflowService):
             return PlanOutcome(PlanStatus.NO_PRODUCTS, problems=("the catalogue is empty",))
 
         request = summary_request(summary, catalogue)
+        # The exact bounds the check uses, so the agent need not work out the time zone.
+        request["planning"]["earliest_start"] = window[0].isoformat()
+        request["planning"]["latest_end"] = window[1].isoformat()
         problems: list[str] = []
 
         def attempt() -> CampaignProposal:

@@ -147,3 +147,42 @@ it("shows why the server refused the progress", async () => {
 
   expect(await screen.findByRole("alert")).toHaveTextContent(reason);
 });
+
+it("moves a plan to the days chosen in the form by revising it", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  // Without new days, a revision keeps the plan's own days.
+  expect(await screen.findByRole("button", { name: "Request a revised plan" })).toBeInTheDocument();
+
+  for (const label of ["First day", "Last day"]) {
+    const input = screen.getByLabelText(label);
+    await user.clear(input);
+    await user.type(input, "2026-11-04");
+  }
+  await user.click(screen.getByRole("button", { name: "Re-plan for 4 Nov" }));
+
+  const [, init] = fetchMock.mock.calls.find(([url]) => url === `/api/schedules/${ID}/revisions`)!;
+  expect(JSON.parse(String(init.body))).toMatchObject({ startDate: "2026-11-04", endDate: "2026-11-04" });
+});
+
+it("tells a left-out order apart from days with no orders", async () => {
+  const user = userEvent.setup();
+  let reply: unknown = { status: "NoCandidates", schedule: null, rationale: null, confidence: null, problems: [],
+    excluded: [{ orderId: "1df905ed-0000-0000-0000-000000000000", reason: "Short of 200 g flour." }] };
+  schedules = [];
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+    url === "/api/session" ? response({ user: { displayName: "Owner", role: "Owner" }, mode: "mock", csrfToken: "csrf-1" }) :
+    url === "/api/schedules" && init?.method === "POST" ? response(reply) :
+    url === "/api/schedules" ? response({ timeZone: "Australia/Sydney", schedules }) : response({}, 404));
+  render(<App />);
+  await user.click(await screen.findByRole("button", { name: "Ask for a plan" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("the order due on these days was left out");
+  expect(alert).toHaveTextContent("Order 1df905ed was left out: Short of 200 g flour.");
+  expect(alert).not.toHaveTextContent("choose days");
+
+  reply = { ...(reply as object), excluded: [] };
+  await user.click(screen.getByRole("button", { name: "Ask for a plan" }));
+  expect(await screen.findByText(/No confirmed orders are due on these days/)).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});

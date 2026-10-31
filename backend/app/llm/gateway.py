@@ -18,6 +18,7 @@ from typing import Protocol
 
 import http.client
 import json
+import re
 import os
 import urllib.parse
 import urllib.request
@@ -56,6 +57,10 @@ class InvalidLLMOutput(LLMCallFailed):
 
 def parse_structured_reply(text: str, required_fields: tuple[str, ...]) -> dict:
     """Parse a JSON object reply and check the required fields are present."""
+    # Some models wrap the JSON in a Markdown code fence; the object inside is what was asked for.
+    fenced = re.fullmatch(r"\s*```(?:json)?\s*\n(.*?)\n?\s*```\s*", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1)
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -73,7 +78,7 @@ def parse_structured_reply(text: str, required_fields: tuple[str, ...]) -> dict:
     return parsed
 
 
-DEFAULT_TIMEOUT_SECONDS = 30
+DEFAULT_TIMEOUT_SECONDS = 90
 _PROVIDER_SETTINGS = (
     "BAKEFLOW_LLM_BASE_URL",
     "BAKEFLOW_LLM_API_KEY",
@@ -95,6 +100,8 @@ class LLMGateway:
     api_key: str = field(repr=False)
     model_name: str = "unset"
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+    # Extra request fields a provider understands, such as DeepSeek's switch for its reasoning step.
+    extra: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Refuse a provider URL that would send the API key unencrypted.
@@ -121,6 +128,10 @@ class LLMGateway:
             base_url=os.environ["BAKEFLOW_LLM_BASE_URL"],
             api_key=os.environ["BAKEFLOW_LLM_API_KEY"],
             model_name=os.environ["BAKEFLOW_LLM_MODEL"],
+            # Opt-in, because other providers reject a field they don't know.
+            extra={"thinking": {"type": "disabled"}}
+            if os.environ.get("BAKEFLOW_LLM_THINKING") == "off"
+            else {},
         )
 
     def complete(self, prompt: str) -> str:
@@ -129,6 +140,7 @@ class LLMGateway:
             {
                 "model": self.model_name,
                 "messages": [{"role": "user", "content": prompt}],
+                **self.extra,
             }
         ).encode("utf-8")
 

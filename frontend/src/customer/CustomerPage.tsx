@@ -36,6 +36,8 @@ export function CustomerPage({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [reload, setReload] = useState(0);
+  // Orders already paid: the orders list doesn't carry payments, so each payable order is asked once.
+  const [paid, setPaid] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState("");
   const [answers, setAnswers] = useState<string[]>([]);
   const [answer, setAnswer] = useState("");
@@ -63,8 +65,15 @@ export function CustomerPage({
     setLoadError("");
     api
       .orders()
-      .then((data) => {
-        if (active) setOrders(data);
+      .then(async (data) => {
+        if (!active) return;
+        setOrders(data);
+        const checks = await Promise.allSettled(
+          data.filter((order) => PAYABLE.includes(order.status)).map(async (order) =>
+            (await api.payments(order.id)).some((p) => p.paid) ? order.id : null),
+        );
+        if (active)
+          setPaid(new Set(checks.flatMap((c) => (c.status === "fulfilled" && c.value ? [c.value] : []))));
       })
       .catch((e: Error) => {
         if (!active) return;
@@ -168,6 +177,7 @@ export function CustomerPage({
       if (settled.paid) {
         setPayMessage(`Payment of $${settled.amount} received. Thank you!`);
         setPayment(null);
+        setPaid((current) => new Set(current).add(payment.orderId));
       } else {
         // A failed or declined payment changes nothing; the customer can try again.
         setPayMessage(`The payment did not go through${settled.reason ? `: ${settled.reason}` : ""}. Nothing was charged.`);
@@ -330,8 +340,14 @@ export function CustomerPage({
                 <dt>Budget (AUD)</dt><dd>{result.summary.budget ?? "Not specified"}</dd>
               </dl>
               <p className="field-help">Check the full date and year. If you omitted a year, the next occurrence is shown. No draft has been saved yet.</p>
-              {result.issues.length > 0 && <Notice error><ul>{result.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></Notice>}
-              {result.issues.length > 0 && <section className="clarify" aria-labelledby="clarification-title">
+              {result.ownerReview ? (
+                <Notice>
+                  <strong>Sent to the bakery owner for review.</strong> Your request needs the owner to check a recipe or an
+                  allergen detail before it can become a draft. You don’t need to send it again: follow it just below,
+                  under “Requests with the bakery owner”.
+                </Notice>
+              ) : result.issues.length > 0 && <Notice error><ul>{result.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></Notice>}
+              {result.issues.length > 0 && !result.ownerReview && <section className="clarify" aria-labelledby="clarification-title">
                 <h3 id="clarification-title">A few details before we continue</h3>
                 <ul>{result.questions.map(question => <li key={question}>{question}</li>)}</ul>
                 {answers.length > 0 && <details><summary>Your previous answers</summary><ol>{answers.map((text, index) => <li key={index}>{text}</li>)}</ol></details>}
@@ -345,14 +361,16 @@ export function CustomerPage({
                   setResult(null); setMessage(""); setAnswers([]); setAnswer(""); setError(""); setEnded(true); attempt.current = null;
                 }}>End request without saving</button>
               </section>}
-              <div className="hero-actions">
+              {!result.ownerReview && <div className="hero-actions">
                 <button className="secondary" disabled={sending} onClick={() => { setResult(null); setAnswers([]); setAnswer(""); setError(""); document.getElementById("order-request")?.focus(); }}>Correct my request</button>
                 <button className="primary" disabled={sending || !result.confirmationToken || result.issues.length > 0} onClick={confirm}>{sending ? "Saving draft…" : "Confirm and save draft"}</button>
-              </div>
+              </div>}
             </section>
           )}
         </section>
       </div>
+      {/* Requests waiting on the owner sit next to the form that sent them, so a customer doesn't send them twice. */}
+      <OwnerReviews session={session} refreshKey={result} onExpired={onExpired} showRequestForm={false} />
       <section className="card orders" aria-labelledby="orders-title">
         <div className="section-heading">
           <div>
@@ -458,7 +476,8 @@ export function CustomerPage({
                     <td>
                       <div className="actions">
                         {order.status === "Quoted" && <button className="primary" aria-label={`View quote for order ${order.id}`} disabled={quoteBusy} onClick={() => viewQuote(order.id)}>View quote</button>}
-                        {PAYABLE.includes(order.status) && <button className="primary" aria-label={`Pay for order ${order.id}`} disabled={payBusy} onClick={() => openPayment(order.id)}>Pay</button>}
+                        {PAYABLE.includes(order.status) && paid.has(order.id) && <span className="badge" data-status="Completed">Paid</span>}
+                        {PAYABLE.includes(order.status) && !paid.has(order.id) && <button className="primary" aria-label={`Pay for order ${order.id}`} disabled={payBusy} onClick={() => openPayment(order.id)}>Pay</button>}
                         <button className="secondary" aria-label={`Track order ${order.id}`} disabled={trackingBusy} onClick={() => track(order.id)}>Track order</button>
                       </div>
                     </td>
@@ -472,7 +491,6 @@ export function CustomerPage({
       </section>
       <Notifications refresh={reload} onExpired={onExpired} />
       <OrderChanges orders={orders} session={session} onExpired={onExpired} onChanged={() => setReload(n => n + 1)} />
-      <OwnerReviews session={session} refreshKey={result} onExpired={onExpired} showRequestForm={false} />
     </>
   );
 }

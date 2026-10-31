@@ -2,9 +2,11 @@ import { OrderChangeReviews } from "./OrderChangeReviews";
 import { OwnerReviews } from "../components/OwnerReviews";
 import type { Session } from "../api/client";
 import { AIActivityPage } from "./AIActivityPage";
+import { AllOrders } from "./AllOrders";
 import { ApprovalsPage } from "./ApprovalsPage";
 import { FinancePage } from "./FinancePage";
 import { InventoryPage } from "./InventoryPage";
+import { MarketingPage } from "./MarketingPage";
 import { SchedulesPage } from "./SchedulesPage";
 
 export const ownerPages = {
@@ -15,7 +17,7 @@ export const ownerPages = {
   },
   orders: {
     title: "Orders",
-    description: "Change and cancellation requests from your customers.",
+    description: "Every order and where it stands, and the changes customers ask for.",
     detail:
       "Customer orders and their current status will appear here once the owner order service is connected.",
   },
@@ -34,6 +36,11 @@ export const ownerPages = {
     description: "Make room for a well-planned baking day.",
     detail: "",
   },
+  marketing: {
+    title: "Marketing",
+    description: "Plan a campaign, approve every post, then publish it.",
+    detail: "",
+  },
   ai: {
     title: "AI activity",
     description: "Every assistant request, with its retries and result.",
@@ -47,6 +54,7 @@ export function OwnerPage({ page, session, onExpired }: { page: OwnerPageName; s
   if (page === "finance") return <FinancePage session={session} />;
   if (page === "inventory") return <InventoryPage session={session} />;
   if (page === "schedules") return <SchedulesPage session={session} />;
+  if (page === "marketing") return <MarketingPage session={session} />;
   if (page === "ai") return <AIActivityPage />;
   const content = ownerPages[page];
   return (
@@ -57,7 +65,7 @@ export function OwnerPage({ page, session, onExpired }: { page: OwnerPageName; s
         <h1>{content.title}</h1>
         <p>{content.description}</p>
       </section>
-      {page === "orders" && <OrderChangeReviews session={session} onExpired={onExpired} />}
+      {page === "orders" && <><AllOrders onExpired={onExpired} /><OrderChangeReviews session={session} onExpired={onExpired} /></>}
       {page !== "orders" && <section className="card placeholder">
         <span className="stamp" aria-hidden="true">
           ◇

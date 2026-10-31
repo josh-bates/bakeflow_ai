@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { App } from "../App";
@@ -81,6 +81,54 @@ it("shows a summary without saving until the customer confirms", async () => {
     body: JSON.stringify({ confirmationToken: "signed-summary" }),
     headers: expect.objectContaining({ "X-CSRF-Token": "test-csrf" }),
   }));
+});
+
+it("shows the owner every order, including one the customer accepted and paid", async () => {
+  const order = (id: string, status: string, change: Record<string, unknown> = {}) => ({
+    id, customer: "Demo Customer", summary: "24 Vanilla cupcake", requiredAt: "2027-10-02T02:00:00Z", status,
+    createdAt: "2026-11-01T00:00:00Z", quote: null, accepted: false, payment: null, ...change });
+  fetchMock.mockImplementation(async (url: string) =>
+    url === "/api/session" ? response(session("Owner")) :
+    url === "/api/owner/orders" ? response({ orders: [
+      order("aaaaaaaa-1", "Draft"),
+      order("bbbbbbbb-2", "Confirmed", { quote: { version: 1, total: "94.23", customerDecision: "Accepted" }, accepted: true, payment: "Succeeded" }),
+    ] }) : response({ orders: [] }));
+  location.hash = "#/owner/orders";
+  render(<App />);
+  const paid = (await screen.findByRole("rowheader", { name: "bbbbbbbb" })).closest("tr")!;
+  expect(paid).toHaveTextContent("$94.23");
+  expect(paid).toHaveTextContent("accepted");
+  expect(paid).toHaveTextContent("Paid");
+  expect(within(paid).getByText("Confirmed")).toHaveAttribute("data-status", "Confirmed");
+  expect(screen.getByRole("rowheader", { name: "aaaaaaaa" }).closest("tr")).toHaveTextContent("Not priced yet");
+});
+
+it("tells the customer a request went to the owner, and shows it next to the form", async () => {
+  const user = userEvent.setup();
+  const referred = { ...preview, confirmationToken: null, questions: [], ownerReview: { id: "r1" },
+    issues: ["Your request is pending bakery owner review. No draft has been saved. See Owner reviews below."] };
+  const review = { id: "r1", version: 1, kind: "Intake", status: "Pending", orderId: null, message: "A gluten-free cake",
+    summary: null, conversation: [], resolution: null, createdAt: "2026-11-01T00:00:00Z" };
+  let sent = false;
+  fetchMock.mockImplementation(async (url: string) =>
+    url === "/api/session" ? response(session()) :
+    url === "/api/order-requests" ? (sent = true, response(referred)) :
+    url === "/api/exception-requests" ? response({ requests: sent ? [review] : [] }) : response({ orders: [] }));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  await screen.findByLabelText("What would you like to order?");
+  // Nothing under review yet, so there is no empty section.
+  expect(screen.queryByRole("heading", { name: "Requests with the bakery owner" })).not.toBeInTheDocument();
+
+  await user.type(screen.getByLabelText("What would you like to order?"), "A gluten-free cake");
+  await user.click(screen.getByRole("button", { name: /Send order request/ }));
+
+  expect(await screen.findByText("Sent to the bakery owner for review.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Confirm and save draft" })).not.toBeInTheDocument();
+  expect(screen.queryByText("A few details before we continue")).not.toBeInTheDocument();
+  const reviews = await screen.findByRole("heading", { name: "Requests with the bakery owner" });
+  // It sits above the orders list, not at the bottom of the page.
+  expect(reviews.compareDocumentPosition(screen.getByRole("heading", { name: "Your orders" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 it("blocks incomplete summaries and lets the customer correct the request", async () => {
@@ -232,9 +280,9 @@ it("lets an owner navigate live order reviews and remaining placeholder pages", 
     if (title === "Orders") expect(screen.getByRole("heading", { name: "Order change reviews" })).toBeInTheDocument();
     else expect(screen.getByText(/This page is a placeholder/)).toBeInTheDocument();
   }
-  // Only the session and the sidebar's counts: the placeholder page itself asks for nothing.
+  // The session, the sidebar's counts and the Orders page's list; nothing else.
   const urls = new Set(fetchMock.mock.calls.map(([url]) => url));
-  expect(urls).toEqual(new Set(["/api/session", "/api/finance/quotes", "/api/inventory/items", "/api/schedules"]));
+  expect(urls).toEqual(new Set(["/api/session", "/api/finance/quotes", "/api/inventory/items", "/api/schedules", "/api/marketing/campaigns", "/api/owner/orders"]));
 });
 
 it("rejects a malformed successful response rather than showing fabricated orders", async () => {

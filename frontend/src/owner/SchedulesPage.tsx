@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   ApiError,
@@ -48,8 +48,19 @@ function planMessage(result: PlanResult): Message {
   const excluded = result.excluded.map((e) => `Order ${short(e.orderId)} was left out: ${e.reason}`);
   if (result.status === "Proposed")
     return { error: false, text: `Version ${result.schedule?.version} is ready for your review.`, items: excluded };
+  // Orders were due but each one was left out (stock, another plan, a pending change): say that, not "wrong days".
+  if (result.status === "NoCandidates" && excluded.length)
+    return {
+      error: true,
+      text: `Nothing was planned: ${excluded.length === 1 ? "the order due on these days was" : `all ${excluded.length} orders due on these days were`} left out. Fix the reason below, then ask again.`,
+      items: excluded,
+    };
   if (result.status === "NoCandidates")
-    return { error: false, text: "No confirmed orders can be planned for these days.", items: excluded };
+    return {
+      error: false,
+      text: "No confirmed orders are due on these days, so nothing was planned. A plan covers the orders collected on its days; to bake earlier, choose days from the baking day up to the collection day.",
+      items: [],
+    };
   return {
     error: true,
     text: "The planning assistant gave no usable plan. Nothing was saved.",
@@ -204,6 +215,13 @@ export function SchedulesPage({ session }: { session: Session }) {
   const [busy, setBusy] = useState(false);
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
+  // Days the owner chose in the form; a revised plan can move to them.
+  const [picked, setPicked] = useState(false);
+  // The answer appears above the plans; bring it into view, since the button may be far below.
+  const answer = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (message || error) answer.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [message, error]);
 
   const load = useCallback(() => api.schedules().then(setData, (err: unknown) => setError(failure(err))), []);
   useEffect(() => {
@@ -230,6 +248,9 @@ export function SchedulesPage({ session }: { session: Session }) {
   const progress = (s: Schedule) => (t: Task, status: Progress) =>
     run(async () => progressMessage(await api.recordTaskProgress(s.id, t.id, status, session.csrfToken), t));
   const datesValid = Boolean(startDate && endDate && endDate >= startDate);
+  // A plan holds its orders, so other days are reached by revising it, not by a second plan.
+  const movesTo = (s: Schedule) =>
+    picked && datesValid && (startDate !== s.latest.startDate || endDate !== s.latest.endDate);
   const waiting = Boolean(data?.schedules.some((s) => s.state === "AwaitingApproval"));
   const released = Boolean(data?.schedules.some((s) => s.state === "Approved"));
   // One step at a time: a plan waiting for a decision comes before any released one.
@@ -253,6 +274,7 @@ export function SchedulesPage({ session }: { session: Session }) {
           })}
         </ol>
       </section>
+      <div ref={answer}>
       {error && <Notice error>{error}</Notice>}
       {message && (
         <Notice error={message.error}>
@@ -266,6 +288,7 @@ export function SchedulesPage({ session }: { session: Session }) {
           )}
         </Notice>
       )}
+      </div>
       <div className="plan-grid">
         <div className="plan-list">
           {!data && !error && <Notice>Loading production plans…</Notice>}
@@ -289,10 +312,12 @@ export function SchedulesPage({ session }: { session: Session }) {
                   <button
                     className="text-button ai"
                     disabled={busy}
-                    onClick={() => plan(s.latest.startDate, s.latest.endDate, s.id)}
+                    onClick={() => (movesTo(s) ? plan(startDate, endDate, s.id) : plan(s.latest.startDate, s.latest.endDate, s.id))}
                   >
                     <AiMark />
-                    Request a revised plan
+                    {movesTo(s)
+                      ? `Re-plan for ${day(startDate, { day: "numeric", month: "short" })}${startDate === endDate ? "" : ` to ${day(endDate, { day: "numeric", month: "short" })}`}`
+                      : "Request a revised plan"}
                   </button>
                 </div>
                 <h2 id={`plan-${s.id}`}>
@@ -345,6 +370,11 @@ export function SchedulesPage({ session }: { session: Session }) {
           <p className="field-help">
             Confirmed orders due on these days are planned. Nothing is released for production until you approve it.
           </p>
+          {data?.schedules.length ? (
+            <p className="field-help">
+              To move an existing plan to other days, choose them here and use “Re-plan for …” on that plan.
+            </p>
+          ) : null}
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -354,11 +384,11 @@ export function SchedulesPage({ session }: { session: Session }) {
             <div className="dates">
               <label>
                 First day
-                <input type="date" value={startDate} required disabled={busy} onChange={(e) => setStartDate(e.target.value)} />
+                <input type="date" value={startDate} required disabled={busy} onChange={(e) => { setStartDate(e.target.value); setPicked(true); }} />
               </label>
               <label>
                 Last day
-                <input type="date" value={endDate} required disabled={busy} onChange={(e) => setEndDate(e.target.value)} />
+                <input type="date" value={endDate} required disabled={busy} onChange={(e) => { setEndDate(e.target.value); setPicked(true); }} />
               </label>
             </div>
             {/* A plan waiting for a decision keeps the page's one primary button. */}
