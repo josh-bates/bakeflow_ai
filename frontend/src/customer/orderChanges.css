@@ -1,7 +1,0 @@
-.order-changes { margin-block: 2rem; }
-.order-changes select, .order-changes textarea { width: 100%; margin-block: .5rem 1rem; padding: .8rem; font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; }
-.order-changes textarea { min-height: 6rem; }
-.change-actions { display: flex; flex-wrap: wrap; gap: .7rem; margin-block: 1rem; }
-.change-request { padding-block: 1.5rem; border-top: 1px solid currentColor; overflow-wrap: anywhere; }
-.change-terms { display: grid; grid-template-columns: minmax(6rem, 1fr) 2fr; gap: .5rem 1rem; }
-.change-terms dd { margin: 0; overflow-wrap: anywhere; }

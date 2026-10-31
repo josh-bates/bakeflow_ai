@@ -7,6 +7,7 @@ import {
   type QuoteQueueItem,
   type Session,
 } from "../api/client";
+import { AiMark } from "../components/AiMark";
 import { Notice } from "../components/Notice";
 
 // UC-05 (BAKE-23): the owner prices an order, reviews the calculated quote
@@ -36,6 +37,18 @@ const DECISION: Record<string, string> = {
 
 type Draft = { description: string; amount: string };
 
+// The band on each card says at a glance whose move it is.
+function band(item: QuoteQueueItem): { tone: string; label: string } {
+  const quote = item.quote;
+  if (!quote) return item.ready ? { tone: "blush", label: "Ready to price" } : { tone: "", label: "Stock check pending" };
+  if (item.approval === "Pending") return { tone: "apricot", label: "Waiting for you" };
+  if (item.approval === "Withheld" || quote.customerDecision === "Rejected")
+    return { tone: "blush", label: "Needs a new version" };
+  return quote.customerDecision === "Accepted"
+    ? { tone: "mint", label: "Accepted" }
+    : { tone: "mint", label: "With the customer" };
+}
+
 function Breakdown({ quote }: { quote: OwnerQuote }) {
   const rows: [string, string][] = [
     ["Ingredients", quote.materialCost],
@@ -45,7 +58,7 @@ function Breakdown({ quote }: { quote: OwnerQuote }) {
   ];
   return (
     <div className="table-scroll">
-      <table>
+      <table className="quote-table">
         <caption className="sr-only">Quote version {quote.version} breakdown</caption>
         <tbody>
           {rows.map(([label, value]) => (
@@ -54,7 +67,7 @@ function Breakdown({ quote }: { quote: OwnerQuote }) {
               <td>{money(value)}</td>
             </tr>
           ))}
-          <tr>
+          <tr className="total">
             <th scope="row">Quoted price (target margin {percent(quote.targetMargin)})</th>
             <td>
               <strong>{money(quote.total)}</strong>
@@ -151,74 +164,89 @@ export function ApprovalsPage({ session }: { session: Session }) {
         const invalidExtra = costs(item.orderId) === null;
         const accepted = quote?.customerDecision === "Accepted";
         const working = busy === item.orderId;
+        const state = band(item);
         return (
-          <section key={item.orderId} className="card orders" aria-labelledby={`quote-${item.orderId}`}>
-            <h2 id={`quote-${item.orderId}`}>
-              {label} · {item.summary}
-            </h2>
-            <p className="field-help">
-              Collection {when(item.requiredAt)} (Australia/Sydney) · <span className="badge">{item.orderStatus}</span>
-            </p>
-            {!quote && !item.ready && (
-              <Notice>The stock check for this order is not up to date yet, so it cannot be priced.</Notice>
-            )}
-            {quote && (
-              <>
-                <h3>
-                  Version {quote.version} · {APPROVAL[item.approval ?? "Pending"]}
-                </h3>
-                <Breakdown quote={quote} />
-                {quote.requiresManualReview && (
-                  <Notice error>Flagged for manual review: check the figures before approving.</Notice>
-                )}
-                <p>
-                  {quote.explanation ?? "Explanation unavailable. Please review the figures yourself."}
-                </p>
-                {item.approval === "Approved" && <p className="field-help">{DECISION[quote.customerDecision]}</p>}
-                {item.approval === "Pending" && (
+          <section key={item.orderId} className="card schedule quote-card" aria-labelledby={`quote-${item.orderId}`}>
+            <div className={`lid ${state.tone}`}>
+              <span className="caps">{state.label}</span>
+              <span className="badge" data-status={item.orderStatus}>{item.orderStatus}</span>
+            </div>
+            <div className="plan-body">
+              <h2 id={`quote-${item.orderId}`}>
+                {label} · {item.summary}
+              </h2>
+              <p className="field-help">Collection {when(item.requiredAt)} (Australia/Sydney)</p>
+              {!quote && !item.ready && (
+                <Notice>The stock check for this order is not up to date yet, so it cannot be priced.</Notice>
+              )}
+              {quote && (
+                <>
+                  <h3>
+                    Version {quote.version} · {APPROVAL[item.approval ?? "Pending"]}
+                  </h3>
+                  <div className="quote-grid">
+                    <Breakdown quote={quote} />
+                    <div>
+                      {quote.requiresManualReview && (
+                        <Notice error>Flagged for manual review: check the figures before approving.</Notice>
+                      )}
+                      {quote.explanation ? (
+                        <div className="note-ai">
+                          <AiMark />
+                          <p>{quote.explanation}</p>
+                        </div>
+                      ) : (
+                        <p className="field-help">Explanation unavailable. Please review the figures yourself.</p>
+                      )}
+                      {item.approval === "Approved" && <p className="field-help">{DECISION[quote.customerDecision]}</p>}
+                      {item.approval === "Pending" && (
+                        <div className="actions">
+                          <button className="primary" disabled={!!busy}
+                            onClick={() => act(item.orderId, () => api.decideQuote(quote, "approve", session.csrfToken),
+                              (q) => `${label}: version ${q.version} is approved and shown to the customer.`)}>
+                            Approve version {quote.version}
+                          </button>
+                          <button className="secondary" disabled={!!busy}
+                            onClick={() => act(item.orderId, () => api.decideQuote(quote, "withhold", session.csrfToken),
+                              (q) => `${label}: version ${q.version} is withheld. Revise it to send a new quote.`)}>
+                            Withhold and revise
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+              {(quote ? !accepted : item.ready) && (
+                <form
+                  className={quote ? "quote-extra revise" : "quote-extra"}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    price(item);
+                  }}
+                >
                   <div className="actions">
-                    <button className="primary" disabled={!!busy}
-                      onClick={() => act(item.orderId, () => api.decideQuote(quote, "approve", session.csrfToken),
-                        (q) => `${label}: version ${q.version} is approved and shown to the customer.`)}>
-                      Approve version {quote.version}
-                    </button>
-                    <button className="secondary" disabled={!!busy}
-                      onClick={() => act(item.orderId, () => api.decideQuote(quote, "withhold", session.csrfToken),
-                        (q) => `${label}: version ${q.version} is withheld. Revise it to send a new quote.`)}>
-                      Withhold and revise
+                    <label>
+                      Extra cost (optional)
+                      <input value={draft.description} maxLength={120} disabled={working} placeholder="Gift box"
+                        onChange={(e) => setExtra(item.orderId, { description: e.target.value })} />
+                    </label>
+                    <label>
+                      Amount (AUD)
+                      <input value={draft.amount} inputMode="decimal" autoComplete="off" disabled={working}
+                        aria-invalid={invalidExtra}
+                        onChange={(e) => setExtra(item.orderId, { amount: e.target.value.trim() })} />
+                    </label>
+                    <button className={quote ? "secondary" : "primary"} type="submit" disabled={!!busy || invalidExtra}>
+                      {working ? "Calculating…" : quote ? "Revise as a new version" : "Calculate quote"}
                     </button>
                   </div>
-                )}
-              </>
-            )}
-            {(quote ? !accepted : item.ready) && (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  price(item);
-                }}
-              >
-                <div className="actions">
-                  <label>
-                    Extra cost (optional)
-                    <input value={draft.description} maxLength={120} disabled={working} placeholder="Gift box"
-                      onChange={(e) => setExtra(item.orderId, { description: e.target.value })} />
-                  </label>
-                  <label>
-                    Amount (AUD)
-                    <input value={draft.amount} inputMode="decimal" autoComplete="off" disabled={working}
-                      aria-invalid={invalidExtra}
-                      onChange={(e) => setExtra(item.orderId, { amount: e.target.value.trim() })} />
-                  </label>
-                </div>
-                {invalidExtra && (
-                  <p className="field-help">Give the extra cost a name and an amount such as 12.50.</p>
-                )}
-                <button className={quote ? "secondary" : "primary"} type="submit" disabled={!!busy || invalidExtra}>
-                  {working ? "Calculating…" : quote ? "Revise as a new version" : "Calculate quote"}
-                </button>
-              </form>
-            )}
+                  {invalidExtra && (
+                    <p className="field-help">Give the extra cost a name and an amount such as 12.50.</p>
+                  )}
+                </form>
+              )}
+            </div>
           </section>
         );
       })}

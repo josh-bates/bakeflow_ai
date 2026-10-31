@@ -232,8 +232,9 @@ it("lets an owner navigate live order reviews and remaining placeholder pages", 
     if (title === "Orders") expect(screen.getByRole("heading", { name: "Order change reviews" })).toBeInTheDocument();
     else expect(screen.getByText(/This page is a placeholder/)).toBeInTheDocument();
   }
-  // The session, then the quote queue on Pending approvals (BAKE-23).
-  expect(fetchMock).toHaveBeenCalledTimes(2);
+  // Only the session and the sidebar's counts: the placeholder page itself asks for nothing.
+  const urls = new Set(fetchMock.mock.calls.map(([url]) => url));
+  expect(urls).toEqual(new Set(["/api/session", "/api/finance/quotes", "/api/inventory/items", "/api/schedules"]));
 });
 
 it("rejects a malformed successful response rather than showing fabricated orders", async () => {
@@ -360,4 +361,76 @@ it("refreshes tracking from the server rather than keeping the old stage", async
   await user.click(screen.getByRole("button", { name: "Refresh status" }));
   expect(await screen.findByText("Recorded status: Quoted")).toBeInTheDocument();
   expect(screen.queryByText("Wait for quotation.")).not.toBeInTheDocument();
+});
+
+it("fills the request box with the mock example when asked", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(await screen.findByRole("button", { name: "Use the example" }));
+  expect(screen.getByLabelText("What would you like to order?")).toHaveValue(
+    "24 vanilla birthday cupcakes for collection on 2 Oct before 12:00, no allergy concerns",
+  );
+});
+
+it("shortens a record id in the orders table and colours the status", async () => {
+  const id = "bc1049ef-f06e-4b6f-89e6-6f93d78b000e";
+  fetchMock.mockImplementation(async (url: string) =>
+    url === "/api/session" ? response(session()) :
+    response({ orders: [{ id, status: "Confirmed", summary: "36 cupcakes", requiredAt: "2027-10-02T02:00:00Z" }] }));
+  render(<App />);
+  expect(await screen.findByRole("rowheader", { name: "bc1049ef" })).toHaveAttribute("title", id);
+  expect(screen.getByRole("button", { name: `Track order ${id}` })).toBeInTheDocument();
+  expect(screen.getByText("Confirmed")).toHaveAttribute("data-status", "Confirmed");
+});
+
+it("counts what is waiting on the owner's pages without changing the link names", async () => {
+  const stockItem = (low: boolean) => ({
+    id: "11111111-0000-0000-0000-000000000000", ingredient: "Flour", unit: "g", onHand: "1.000", committed: "0.000",
+    available: "1.000", reorderLevel: "2.000", version: 1, low, suggestedReorder: low ? "3.000" : null,
+  });
+  fetchMock.mockImplementation(async (url: string) =>
+    url === "/api/session" ? response(session("Owner")) :
+    url === "/api/inventory/items" ? response({ items: [stockItem(true)] }) :
+    url === "/api/schedules" ? response({ timeZone: "Australia/Sydney", schedules: [] }) :
+    response({}, 404));
+  location.hash = "#/owner/inventory";
+  render(<App />);
+  const link = await screen.findByRole("link", { name: "Inventory" });
+  await waitFor(() => expect(link).toHaveAttribute("aria-description", "1 waiting"));
+  expect(screen.getByRole("link", { name: "Schedules" })).not.toHaveAttribute("aria-description");
+  expect(screen.getByRole("link", { name: "Pending approvals" })).not.toHaveAttribute("aria-description");
+});
+
+it("counts change requests and order exceptions that wait on the owner", async () => {
+  const change = (status: string) => ({ id: status, orderId: "o1", version: 1, kind: "Change", status, message: "change quantity to 36",
+    proposed: {}, ownerNote: null, quoteTotal: null, createdAt: "2026-11-01T00:00:00Z" });
+  const review = (id: string, status: string) => ({ id, version: 1, kind: "Refund", status, orderId: "o1", message: "Squashed box",
+    summary: null, conversation: [], resolution: null, createdAt: "2026-11-01T00:00:00Z" });
+  fetchMock.mockImplementation(async (url: string) =>
+    url === "/api/session" ? response(session("Owner")) :
+    url === "/api/owner/order-changes" ? response({ requests: ["Pending", "AwaitingApproval", "Quoted", "Applied"].map(change) }) :
+    url === "/api/exception-requests" ? response({ requests: [review("r1", "Pending"), review("r2", "AwaitingCustomer")] }) :
+    url === "/api/finance/quotes" ? response({ orders: [] }) :
+    response({}, 404));
+  // These two endpoints are answered empty for every other test; here they carry the counts.
+  vi.stubGlobal("fetch", fetchMock);
+  location.hash = "#/owner/orders";
+  render(<App />);
+  // A revised quote with the customer, or an applied change, is not the owner's move.
+  await waitFor(() => expect(screen.getByRole("link", { name: "Orders" })).toHaveAttribute("aria-description", "2 waiting"));
+  expect(screen.getByRole("link", { name: "Pending approvals" })).toHaveAttribute("aria-description", "1 waiting");
+  expect(screen.getByRole("link", { name: "Orders" })).not.toHaveTextContent("Soon");
+});
+
+it("offers the next step for each order in one column", async () => {
+  const order = (id: string, status: string) => ({ id, status, summary: "24 cupcakes", requiredAt: "2027-10-02T02:00:00Z" });
+  fetchMock.mockImplementation(async (url: string) =>
+    url === "/api/session" ? response(session()) :
+    response({ orders: [order("ORD-1", "Quoted"), order("ORD-2", "Confirmed"), order("ORD-3", "Draft")] }));
+  render(<App />);
+  expect(await screen.findByRole("button", { name: "View quote for order ORD-1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Pay for order ORD-2" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Pay for order ORD-1" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /(View quote|Pay) for order ORD-3/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Track order ORD-3" })).toBeInTheDocument();
 });

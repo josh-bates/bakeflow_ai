@@ -90,12 +90,12 @@ async function fillReceipt(quantity: string, reference = "inv-1001") {
   return user;
 }
 
-it("shows on hand, committed and available stock exactly as the server gives it", async () => {
+it("shows on hand, committed and available stock in a readable form", async () => {
   render(<App />);
   const flour = await stockRow(/Flour/);
-  expect(within(flour).getByText("400.000 g")).toBeInTheDocument();
-  expect(within(flour).getByText("600.000 g")).toBeInTheDocument();
-  expect(within(flour).getByText("−200.000 g")).toBeInTheDocument();
+  expect(within(flour).getByText("400 g")).toBeInTheDocument();
+  expect(within(flour).getByText("600 g")).toBeInTheDocument();
+  expect(within(flour).getByText("−200 g")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Inventory" })).toHaveAttribute("aria-current", "page");
   expect(screen.queryByText(/This page is a placeholder/)).not.toBeInTheDocument();
 });
@@ -108,7 +108,7 @@ it("records a receipt with the CSRF token and shows the raised stock", async () 
 
   expect(
     await screen.findByText(
-      "Recorded 2500.000 g of Flour from Invoice INV-1001. Flour on hand is now 2900.000 g.",
+      "Recorded 2,500 g of Flour from Invoice INV-1001. Flour on hand is now 2,900 g.",
     ),
   ).toBeInTheDocument();
   const [[, init]] = receiptCalls();
@@ -120,7 +120,7 @@ it("records a receipt with the CSRF token and shows the raised stock", async () 
   });
   expect(init.headers).toEqual(expect.objectContaining({ "X-CSRF-Token": "t" }));
   expect(await screen.findByText("Nothing is below its reorder level.")).toBeInTheDocument();
-  expect(within(await stockRow(/Flour/)).getByText("2900.000 g")).toBeInTheDocument();
+  expect(within(await stockRow(/Flour/)).getByText("2,900 g")).toBeInTheDocument();
   expect(screen.getByLabelText("Reference number")).toHaveValue("");
 });
 
@@ -131,7 +131,7 @@ it("tells the owner when a repeated receipt did not raise stock again", async ()
   await user.selectOptions(screen.getByLabelText("Source"), "Invoice");
   await user.click(screen.getByRole("button", { name: "Record receipt" }));
   expect(
-    await screen.findByText(/Invoice INV-1001 was already recorded for Flour \(2500.000 g\)\. Stock was not raised again\./),
+    await screen.findByText(/Invoice INV-1001 was already recorded for Flour \(2,500 g\)\. Stock was not raised again\./),
   ).toBeInTheDocument();
 });
 
@@ -162,9 +162,9 @@ it("lists low ingredients with the server's suggestion and explains them only wh
   const user = userEvent.setup();
   render(<App />);
   const flour = within((await lowStock()).getByRole("row", { name: /Flour/ }));
-  expect(flour.getByText("−200.000 g")).toBeInTheDocument();
-  expect(flour.getByText("200.000 g")).toBeInTheDocument();
-  expect(flour.getByText("600.000 g")).toBeInTheDocument();
+  expect(flour.getByText("−200 g")).toBeInTheDocument();
+  expect(flour.getByText("200 g")).toBeInTheDocument();
+  expect(flour.getByText("600 g")).toBeInTheDocument();
   expect((await lowStock()).queryByRole("row", { name: /Caster sugar/ })).not.toBeInTheDocument();
   expect(screen.getByText(/Nothing is ordered for you/)).toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([url]) => url === "/api/inventory/low-stock/explanation")).toBe(false);
@@ -220,12 +220,12 @@ it("saves a reorder level for the version the owner saw", async () => {
   await user.type(input, "2500");
   await user.click(screen.getByRole("button", { name: "Save the reorder level for Caster sugar" }));
 
-  expect(await screen.findByText("Caster sugar reorder level is now 2500.000 g.")).toBeInTheDocument();
+  expect(await screen.findByText("Caster sugar reorder level is now 2,500 g.")).toBeInTheDocument();
   const [, init] = fetchMock.mock.calls.find(([url]) => url === `/api/inventory/items/${SUGAR}/reorder-level`)!;
   expect(init.method).toBe("PUT");
   expect(JSON.parse(init.body)).toEqual({ reorderLevel: "2500", version: 1 });
   expect(init.headers["X-CSRF-Token"]).toBe("t");
-  expect((await lowStock()).getByRole("row", { name: /Caster sugar/ })).toHaveTextContent("3000.000 g");
+  expect((await lowStock()).getByRole("row", { name: /Caster sugar/ })).toHaveTextContent("3,000 g");
 });
 
 it("shows the server's reason when the ingredient changed since it was loaded", async () => {
@@ -263,4 +263,34 @@ it("refuses stock levels sent as numbers instead of decimal strings", async () =
   render(<App />);
   expect(await screen.findByText(/returned incomplete data/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Record receipt" })).not.toBeInTheDocument();
+});
+
+it("marks low rows in the stock table and offers Save only on the row being edited", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  expect(within(await stockRow(/Flour/)).getByText("Low")).toHaveAttribute("data-status", "Low");
+  expect(within(await stockRow(/Caster sugar/)).queryByText("Low")).not.toBeInTheDocument();
+  const input = await screen.findByLabelText("Reorder level for Caster sugar (g)");
+  expect(input.closest("form")).toHaveAttribute("data-edited", "false");
+  await user.type(input, "5");
+  expect(input.closest("form")).toHaveAttribute("data-edited", "true");
+});
+
+it("shows each low ingredient as a label that screen readers skip in favour of the table", async () => {
+  render(<App />);
+  await lowStock();
+  const labels = document.querySelector(".labels")!;
+  expect(labels).toHaveAttribute("aria-hidden", "true");
+  expect(labels).toHaveTextContent("Flour");
+  expect(labels).toHaveTextContent("600g");
+  expect(labels).not.toHaveTextContent("Caster sugar");
+  // Available is below zero, so the bar stays empty.
+  expect(labels.querySelector<HTMLElement>(".gauge i")).toHaveStyle({ width: "0%" });
+});
+
+
+it("keeps the stored value only in the reorder-level box", async () => {
+  render(<App />);
+  expect(await screen.findByLabelText("Reorder level for Flour (g)")).toHaveValue("200.000");
+  expect(within(await stockRow(/Flour/)).queryByText("200.000 g")).not.toBeInTheDocument();
 });

@@ -70,7 +70,7 @@ export function AIActivityPage() {
                       <th scope="row">{r.task}</th>
                       <td>{when(r.startedAt)}</td>
                       <td>
-                        {STATUS[r.status]}
+                        <span className="badge" data-status={r.status}>{STATUS[r.status]}</span>
                         {r.lastError && r.status !== "Succeeded" && <div className="field-help">{r.lastError}</div>}
                       </td>
                       <td title={attempts(r)}>{r.attempts}</td>

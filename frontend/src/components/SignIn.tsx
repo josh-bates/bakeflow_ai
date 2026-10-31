@@ -15,7 +15,7 @@ export function SignIn({ onSuccess }: { onSuccess: () => void }) {
   }
   return <section className="card access sign-in">
     <p className="eyebrow">WELCOME TO BAKEFLOW</p>
-    <h1>A little more baking.</h1>
+    <h1>A little <em>more baking.</em></h1>
     <p>Sign in to manage your orders or your bakery.</p>
     <form onSubmit={submit}>
       <label htmlFor="email">Email</label>
