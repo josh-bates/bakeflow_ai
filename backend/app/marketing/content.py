@@ -59,6 +59,7 @@ class ContentStatus(StrEnum):
     AI_UNAVAILABLE = "AIUnavailable"
     SCHEDULED = "Scheduled"
     NOT_APPROVED = "NotApproved"
+    CAMPAIGN_REVISED = "CampaignRevised"
     NOT_READY = "NotReady"
     NOT_IN_CALENDAR = "NotInCalendar"
 
@@ -210,6 +211,12 @@ class ContentPlanner(WorkflowService):
                     problems=("this version of the content is not approved",),
                 )
             stored = self.store.load_ref(session, content)
+            if not campaign_still_approved(self.approvals, session, stored):
+                return ContentOutcome(
+                    ContentStatus.CAMPAIGN_REVISED,
+                    content=content,
+                    problems=(CAMPAIGN_REVISED_PROBLEM,),
+                )
             if not stored.is_ready_for_export():
                 return ContentOutcome(
                     ContentStatus.NOT_READY,
@@ -242,6 +249,11 @@ class ContentPlanner(WorkflowService):
                     problems=("this version of the content is not approved",),
                 )
             stored = self.store.load_ref(session, content)
+            if not campaign_still_approved(self.approvals, session, stored):
+                return ExportOutcome(
+                    ContentStatus.CAMPAIGN_REVISED,
+                    problems=(CAMPAIGN_REVISED_PROBLEM,),
+                )
             if not stored.is_ready_for_export():
                 return ExportOutcome(
                     ContentStatus.NOT_READY,
@@ -358,6 +370,17 @@ def body_prices(body: str) -> set[Decimal]:
         Decimal((dollars or figure).replace(",", ""))
         for dollars, figure in _BODY_PRICE.findall(body)
     }
+
+
+CAMPAIGN_REVISED_PROBLEM = "the campaign plan has changed since this content was written"
+
+
+def campaign_still_approved(
+    approvals: ApprovalService, session: Session, content: MarketingContent
+) -> bool:
+    """8a reaches the posts: content needs the campaign version it was written for."""
+    campaign = RecordRef("Campaign", content.campaign_id, content.campaign_version)
+    return approvals.is_approved(session, campaign, ApprovalKind.CAMPAIGN_PLAN)
 
 
 def claimed(proposal: ContentProposal) -> dict[uuid.UUID, Decimal]:

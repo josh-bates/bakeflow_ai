@@ -215,3 +215,41 @@ def test_nothing_is_published_automatically(store, seeded):
     assert stored(store, outcome.content).auto_publish_opt_in is False
     with store.unit_of_work() as session:
         assert len(list(session.scalars(select(MarketingContent)))) == 1
+
+
+def revise_campaign(store, seeded, campaign: RecordRef) -> None:
+    with store.unit_of_work() as session:
+        current = store.load_ref(session, campaign)
+        store.commit(
+            session,
+            Campaign(
+                campaign_id=campaign.record_id,
+                objective="A different objective.",
+                starts_at=current.starts_at,
+                ends_at=current.ends_at,
+                rationale=current.rationale,
+            ),
+            actor_id=seeded.owner_id,
+            action="test.revise",
+            expected_version=campaign.version,
+        )
+
+
+def test_content_cannot_be_exported_once_its_campaign_is_revised(store, seeded):
+    plans, campaign, outcome = drafted(store, seeded)
+    plans.place_on_calendar(outcome.content, owner_id=seeded.owner_id)
+    revise_campaign(store, seeded, campaign)
+
+    exported = plans.export(outcome.content)
+
+    assert exported.status is ContentStatus.CAMPAIGN_REVISED
+    assert exported.text is None
+
+
+def test_content_cannot_be_placed_once_its_campaign_is_revised(store, seeded):
+    plans, campaign, outcome = drafted(store, seeded)
+    revise_campaign(store, seeded, campaign)
+
+    placed = plans.place_on_calendar(outcome.content, owner_id=seeded.owner_id)
+
+    assert placed.status is ContentStatus.CAMPAIGN_REVISED
