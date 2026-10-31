@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type Profitability, type ProfitLine, type Session } from "../api/client";
+import { AiMark } from "../components/AiMark";
 import { Notice } from "../components/Notice";
 
 // UC-06 steps 4-7 (BAKE-34): profitability from the recorded ledger, and an AI
@@ -107,14 +108,18 @@ export function FinancePage({ session }: { session: Session }) {
                 ]}
               />
               <div className="actions">
-                <button className="secondary" disabled={explaining} onClick={explain}>
+                <button className="secondary ai" disabled={explaining} onClick={explain}>
+                  <AiMark />
                   {explaining ? "Explaining…" : "Explain these figures"}
                 </button>
               </div>
               {explainError && <Notice error>{explainError}</Notice>}
               {explanation?.text && (
                 <section className="order-summary" aria-labelledby="explanation-title">
-                  <h3 id="explanation-title">What these figures mean</h3>
+                  <h3 id="explanation-title">
+                    <AiMark />
+                    What these figures mean
+                  </h3>
                   <p>{explanation.text}</p>
                   <p className="field-help">Written by the assistant from the figures above, which it cannot change.</p>
                 </section>

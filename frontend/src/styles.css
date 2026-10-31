@@ -101,6 +101,7 @@ h1 em, h2 em, h3 em { font-style: italic; color: var(--raspberry); }
 .toc a[aria-current="page"] { background: var(--blush); font-weight: 700; color: var(--ink); box-shadow: 0 8px 18px -10px rgba(0, 0, 0, .5); }
 .toc a[aria-current="page"] .n { font-style: italic; color: var(--raspberry-dark); }
 .soon { padding: 4px 8px 3px; border: 1px solid rgba(207, 229, 216, .45); border-radius: 999px; font: 700 .73rem/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: #bbd5c7; }
+.count { display: grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 999px; background: var(--wait-bg); font: 800 .8rem/1 var(--sans); color: var(--wait-ink); }
 .cameo { margin: 28px auto 0; text-align: center; }
 .cameo img { display: block; width: 138px; height: 176px; margin: 0 auto; padding: 6px; border: 1px solid var(--gold-light); border-radius: 50%; object-fit: cover; object-position: 36% 50%; }
 .cameo p { margin: 12px 0 0; font: italic 400 1.15rem/1.35 var(--didone); font-variation-settings: "opsz" 18; color: var(--mint); }
@@ -192,8 +193,8 @@ thead th { padding: 0 16px 12px; border-bottom: 1px solid var(--ink); font: 700 
 tbody th { font-weight: 700; white-space: nowrap; }
 tbody tr:last-child > * { border-bottom: 0; }
 td, tbody th { font-variant-numeric: tabular-nums; }
-td .secondary { min-height: 38px; padding: 7px 14px; font-size: .86rem; letter-spacing: .06em; white-space: nowrap; }
-td .actions { align-items: center; gap: 8px; }
+td .secondary, td .primary { min-height: 38px; padding: 7px 14px; font-size: .86rem; letter-spacing: .06em; white-space: nowrap; }
+td .actions { flex-wrap: nowrap; align-items: center; gap: 8px; }
 td .field-help { margin: 6px 0 0; }
 
 /* ---------- Forms ---------- */
@@ -247,6 +248,15 @@ input:disabled, select:disabled, textarea:disabled { background: #f3f1ec; }
 .order-summary li p { margin: .2rem 0; }
 .order-summary dt { margin-top: .9rem; font-weight: 800; }
 .order-summary dd { margin: .25rem 0 0; overflow-wrap: anywhere; }
+.order-summary h3 .ai-mark { display: inline-grid; margin-right: 8px; vertical-align: 3px; }
+.order-summary > .text-button { margin-top: 10px; }
+.order-summary .actions { margin-top: 14px; }
+.orders .order-summary { margin: 18px 0 8px; }
+.order-summary > .field-help:last-child { margin-bottom: 0; }
+.orders > .actions { margin: 16px 0; }
+.total-line { margin: 4px 0 6px; }
+/* Money stays in the sans face: Bodoni's hairline 4 makes $94.23 read like $9 1.23. */
+.total-line strong { font: 800 1.3rem/1.3 var(--sans); font-variant-numeric: tabular-nums; color: var(--raspberry-dark); }
 .demo-hint .text-button { min-height: 32px; padding: 0; margin-left: 4px; }
 .clarify { margin-top: 20px; padding-top: 18px; border-top: 1px solid #f1d3d8; }
 .clarify textarea { min-height: 96px; margin-top: 8px; }
@@ -270,7 +280,7 @@ input:disabled, select:disabled, textarea:disabled { background: #f3f1ec; }
 .etq .name { display: flex; align-items: center; justify-content: center; gap: 12px; font: 600 1.7rem/1.1 var(--didone); font-variation-settings: "opsz" 24; }
 .etq .name::before, .etq .name::after { content: ""; flex: 0 1 26px; height: 1px; background: var(--gold-ink); }
 .etq .caps { display: block; margin-top: 12px; font-size: .73rem; color: var(--gold-ink); }
-.etq .num { display: block; margin-top: 6px; font: 600 2.7rem/1.05 var(--didone); font-variation-settings: "opsz" 24; font-variant-numeric: lining-nums; overflow-wrap: anywhere; color: var(--wait-ink); }
+.etq .num { display: block; margin-top: 6px; font: 600 2.7rem/1.05 var(--didone); font-variation-settings: "opsz" 11; font-variant-numeric: lining-nums; overflow-wrap: anywhere; color: var(--wait-ink); }
 .etq .num small { margin-left: 4px; font: 600 .95rem var(--sans); color: var(--muted); }
 .gauge { position: relative; height: 6px; margin: 14px 0 9px; border-radius: 999px; background: #f3e3cb; }
 .gauge i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 999px; background: var(--wait-dot); }
@@ -292,6 +302,28 @@ tr.low > th { box-shadow: inset 4px 0 0 var(--wait-dot); }
 tr.low .badge { min-height: 24px; margin-left: 8px; padding: 1px 10px 1px 8px; font-size: .8rem; }
 .note-ai { display: flex; gap: 12px; margin-top: 18px; padding: 16px 18px; border: 1px solid #f1d3d8; border-radius: 4px; background: var(--blush-soft); }
 .note-ai p { margin: 0; overflow-wrap: anywhere; }
+
+/* ---------- Approvals ---------- */
+.quote-card + .quote-card { margin-top: 24px; }
+.quote-card .plan-body h2 { font-size: 1.9rem; }
+.quote-card h3 { margin-top: 14px; }
+.quote-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px 32px; }
+.quote-grid .note-ai { margin-top: 0; }
+.quote-grid .notice:first-child { margin-top: 0; }
+.quote-grid .field-help:last-child { margin-bottom: 0; }
+.quote-grid .actions { margin-top: 16px; }
+.quote-table { margin-top: 0; }
+.quote-table th, .quote-table td { padding: 9px 0; }
+.quote-table tbody th { font-weight: 500; white-space: normal; color: var(--ink-2); }
+.quote-table td { text-align: right; }
+.quote-table .total > * { border-top: 1px solid var(--ink); }
+.quote-table .total th { font-weight: 700; color: var(--ink); }
+.quote-table .total strong { font: 800 1.35rem/1.2 var(--sans); font-variant-numeric: tabular-nums; color: var(--raspberry-dark); }
+.quote-extra .actions { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: 14px; }
+.quote-extra label { margin: 0; }
+.quote-extra .field-help { margin: 8px 0 0; }
+.quote-extra { margin-top: 14px; }
+.quote-extra.revise { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
 
 /* ---------- Schedules ---------- */
 .method { display: flex; margin: 0; padding: 0 0 6px; list-style: none; }
@@ -319,7 +351,8 @@ tr.low .badge { min-height: 24px; margin-left: 8px; padding: 1px 10px 1px 8px; f
 .plan-body { padding: 22px 32px 28px; }
 .plan-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; }
 .plan-top .caps { color: var(--muted); }
-.plan-body h2 { margin: 6px 0 4px; font-size: 2.3rem; }
+/* A low optical size thickens Bodoni's hairlines, so the digits in dates and order ids stay legible. */
+.plan-body h2 { margin: 6px 0 4px; font-size: 2.3rem; font-variation-settings: "opsz" 11; }
 .plan-body > .field-help { margin: 0 0 8px; }
 .released-title { margin: 24px 0 0; padding-top: 18px; border-top: 1px solid var(--line); }
 .tasks th, .tasks td { padding-left: 12px; padding-right: 12px; }
@@ -348,6 +381,7 @@ tr.low .badge { min-height: 24px; margin-left: 8px; padding: 1px 10px 1px 8px; f
   .topbar, main { padding-left: 28px; padding-right: 28px; }
   .masthead, footer { padding-left: 28px; padding-right: 28px; }
   .plan-grid { grid-template-columns: minmax(0, 1fr); }
+  .toc .count { margin-left: 4px; }
   .plan-form { order: -1; }
   .stock-grid .plan-form { order: 0; }
 }
@@ -358,6 +392,14 @@ tr.low .badge { min-height: 24px; margin-left: 8px; padding: 1px 10px 1px 8px; f
   main { padding: 0 20px 44px; }
   .toc { flex-wrap: wrap; overflow-x: visible; }
   .orders tbody th { white-space: normal; overflow-wrap: anywhere; }
+  /* On a phone each order is a small card, so its next step isn't scrolled out of sight. */
+  .order-list, .order-list tbody, .order-list tr, .order-list tbody th, .order-list td { display: block; }
+  .order-list { margin-top: 12px; }
+  .order-list thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+  .order-list tr { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .order-list tbody th, .order-list td { padding: 3px 0; border: 0; }
+  .order-list tbody tr:last-child > * { border: 0; }
+  .order-list td .actions { flex-wrap: wrap; margin-top: 8px; }
   .masthead { grid-template-columns: minmax(0, 1fr); justify-items: center; padding: 12px 20px; }
   .masthead .identity { justify-self: stretch; justify-content: space-between; }
   .masthead .brand { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 4px 12px; }
@@ -379,6 +421,9 @@ tr.low .badge { min-height: 24px; margin-left: 8px; padding: 1px 10px 1px 8px; f
   .request-intro { grid-row: auto; position: static; }
   .sign-in { margin: 28px auto; padding: 26px 22px 28px; }
   .decision .actions > * { flex: 1 1 100%; }
+  .quote-grid, .quote-extra .actions { grid-template-columns: minmax(0, 1fr); }
+  .quote-card .plan-body h2 { font-size: 1.6rem; }
+  .quote-grid .actions > * { flex: 1 1 100%; }
   .labels.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .labels.compact .in { padding: 12px 10px 10px; }
   .labels.compact .num { font-size: 1.45rem; }

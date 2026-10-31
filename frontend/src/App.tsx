@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type Session } from "./api/client";
 import { CustomerPage } from "./customer/CustomerPage";
 import { OwnerPage, ownerPages, type OwnerPageName } from "./owner/OwnerPage";
+import { useOwnerCounts } from "./owner/useOwnerCounts";
 import { SignIn } from "./components/SignIn";
 import { Notice } from "./components/Notice";
 
@@ -60,6 +61,7 @@ export function App() {
         : "/customer"
       : path;
   const ownerPage = route.split("/")[2] as OwnerPageName;
+  const counts = useOwnerCounts(session?.user.role === "Owner", route);
   const permitted =
     session?.user.role === "Customer"
       ? route === "/customer"
@@ -148,19 +150,24 @@ export function App() {
               <div className="side-brand">{brand}</div>
               <p className="toc-title" aria-hidden="true">Contents</p>
               <nav className="toc" aria-label="Main navigation">
-                {Object.entries(ownerPages).map(([key, value], index) => (
-                  <a
-                    key={key}
-                    href={`#/owner/${key}`}
-                    aria-current={route === `/owner/${key}` ? "page" : undefined}
-                  >
-                    <span className="n" aria-hidden="true">
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
-                    {value.title}
-                    {key === "orders" && <span className="soon" aria-hidden="true">Soon</span>}
-                  </a>
-                ))}
+                {Object.entries(ownerPages).map(([key, value], index) => {
+                  const waiting = counts[key as OwnerPageName] ?? 0;
+                  return (
+                    <a
+                      key={key}
+                      href={`#/owner/${key}`}
+                      aria-current={route === `/owner/${key}` ? "page" : undefined}
+                      aria-description={waiting > 0 ? `${waiting} waiting` : undefined}
+                    >
+                      <span className="n" aria-hidden="true">
+                        {String(index + 1).padStart(2, "0")}
+                      </span>
+                      {value.title}
+                      {key === "orders" && <span className="soon" aria-hidden="true">Soon</span>}
+                      {waiting > 0 && <span className="count" aria-hidden="true">{waiting}</span>}
+                    </a>
+                  );
+                })}
               </nav>
               <figure className="cameo">
                 <img src="/images/chocolate-cake.jpg" alt="" />

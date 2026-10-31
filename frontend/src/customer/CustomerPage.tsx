@@ -383,7 +383,7 @@ export function CustomerPage({
           {quoteError && <Notice error>{quoteError}</Notice>}
           {quoteMessage && <Notice>{quoteMessage}</Notice>}
           {quote && <>
-            <p><strong>Total price: ${quote.total} (AUD)</strong></p>
+            <p className="total-line"><strong>Total price: ${quote.total} (AUD)</strong></p>
             <p className="field-help">Quote version {quote.version}. Accepting confirms your order at this price. No payment is taken now.</p>
             <div className="actions">
               <button className="primary" disabled={quoteBusy} onClick={() => decide(true)}>Accept quote</button>
@@ -398,7 +398,7 @@ export function CustomerPage({
           {payError && <Notice error>{payError}</Notice>}
           {payMessage && <Notice>{payMessage}</Notice>}
           {payment && <>
-            <p><strong>Amount due: ${payment.amount} (AUD)</strong></p>
+            <p className="total-line"><strong>Amount due: ${payment.amount} (AUD)</strong></p>
             <p className="field-help">Test mode: this is a simulated payment. No card details are needed and no money moves.</p>
             <div className="actions">
               <button className="primary" disabled={payBusy} onClick={() => pay("Succeeded")}>Pay ${payment.amount} (test)</button>
@@ -422,7 +422,7 @@ export function CustomerPage({
           </div>
         ) : (
           <div className="table-scroll">
-            <table>
+            <table className="order-list">
               <caption className="sr-only">
                 Orders belonging to your signed-in account
               </caption>
@@ -432,9 +432,7 @@ export function CustomerPage({
                   <th>Details</th>
                   <th>Required time</th>
                   <th>Status</th>
-                  <th>Tracking</th>
-                  <th>Quote</th>
-                  <th>Payment</th>
+                  <th>Next step</th>
                 </tr>
               </thead>
               <tbody>
@@ -454,9 +452,13 @@ export function CustomerPage({
                     <td>
                       <span className="badge" data-status={order.status}>{order.status}</span>
                     </td>
-                    <td><button className="secondary" aria-label={`Track order ${order.id}`} disabled={trackingBusy} onClick={() => track(order.id)}>Track order</button></td>
-                    <td>{order.status === "Quoted" ? <button className="primary" aria-label={`View quote for order ${order.id}`} disabled={quoteBusy} onClick={() => viewQuote(order.id)}>View quote</button> : <span className="muted">—</span>}</td>
-                    <td>{PAYABLE.includes(order.status) ? <button className="secondary" aria-label={`Pay for order ${order.id}`} disabled={payBusy} onClick={() => openPayment(order.id)}>Pay</button> : <span className="muted">—</span>}</td>
+                    <td>
+                      <div className="actions">
+                        {order.status === "Quoted" && <button className="primary" aria-label={`View quote for order ${order.id}`} disabled={quoteBusy} onClick={() => viewQuote(order.id)}>View quote</button>}
+                        {PAYABLE.includes(order.status) && <button className="primary" aria-label={`Pay for order ${order.id}`} disabled={payBusy} onClick={() => openPayment(order.id)}>Pay</button>}
+                        <button className="secondary" aria-label={`Track order ${order.id}`} disabled={trackingBusy} onClick={() => track(order.id)}>Track order</button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
