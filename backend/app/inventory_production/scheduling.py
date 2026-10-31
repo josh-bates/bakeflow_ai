@@ -327,6 +327,11 @@ class ProductionPlanner(WorkflowService):
             moved = [str(order_id)[:8] for order_id in needs if order_id in elsewhere]
             if moved:
                 return refused(f"Order {', '.join(moved)} is now in another released plan.")
+            # Another request may have saved a plan for these orders while the agent ran.
+            waiting = self._unreleased_elsewhere(session, schedule_id)
+            taken = [str(order_id)[:8] for order_id in needs if order_id in waiting]
+            if taken:
+                return refused(f"Order {', '.join(taken)} is now in another plan. Approve that plan or request a revised one.")
             shortages = self.inventory.check_plan(
                 session, needs, exclude_orders=self._released_here(session, schedule_id)
             )
@@ -418,6 +423,7 @@ class ProductionPlanner(WorkflowService):
         ).all()
         products = {p.product_id: p for p in session.scalars(select(Product))}
         elsewhere = self._released_elsewhere(session, schedule_id)
+        waiting = self._unreleased_elsewhere(session, schedule_id)
         candidates: list[_Candidate] = []
         excluded: list[ExcludedOrder] = []
         accepted: dict[uuid.UUID, dict[uuid.UUID, Decimal]] = {}
@@ -425,6 +431,11 @@ class ProductionPlanner(WorkflowService):
             ref = self.store.ref(order)
             if order.order_id in elsewhere:
                 excluded.append(ExcludedOrder(ref, "It is already in another released plan."))
+                continue
+            if order.order_id in waiting:
+                excluded.append(
+                    ExcludedOrder(ref, "It is already in another plan. Approve that plan or request a revised one.")
+                )
                 continue
             try:
                 needs = self.inventory.calculate_needs(session, order)
@@ -461,6 +472,29 @@ class ProductionPlanner(WorkflowService):
     def _released_elsewhere(session: Session, schedule_id: uuid.UUID | None) -> set[uuid.UUID]:
         """Orders in the released version of any schedule other than ``schedule_id``."""
         query = _released_snapshots()
+        if schedule_id is not None:
+            query = query.where(ProductionSchedule.schedule_id != schedule_id)
+        return {uuid.UUID(key) for snapshot in session.scalars(query) for key in snapshot}
+
+    @staticmethod
+    def _unreleased_elsewhere(session: Session, schedule_id: uuid.UUID | None) -> set[uuid.UUID]:
+        """Orders in the unreleased latest version of any schedule other than ``schedule_id``."""
+        query = (
+            select(ProductionScheduleVersion.requirements_snapshot)
+            .join(
+                ProductionSchedule,
+                and_(
+                    ProductionSchedule.schedule_id == ProductionScheduleVersion.schedule_id,
+                    ProductionSchedule.version == ProductionScheduleVersion.version,
+                ),
+            )
+            .where(
+                or_(
+                    ProductionSchedule.released_version.is_(None),
+                    ProductionSchedule.released_version != ProductionSchedule.version,
+                )
+            )
+        )
         if schedule_id is not None:
             query = query.where(ProductionSchedule.schedule_id != schedule_id)
         return {uuid.UUID(key) for snapshot in session.scalars(query) for key in snapshot}
