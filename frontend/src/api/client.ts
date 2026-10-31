@@ -250,6 +250,14 @@ export type MarketingSummary = {
 export type PublishedPost = { reference: string; channel: string; platform: string; body: string; publishedAt: string };
 export type PostPlan = { platform: MarketingPost["platform"]; scheduledAt: string };
 
+/** One order on the owner's Orders page: where it stands, its latest quote and its payment. */
+export type OwnerOrder = {
+  id: string; customer: string; summary: string; requiredAt: string; status: string; createdAt: string;
+  quote: { version: number; total: string; customerDecision: string } | null;
+  accepted: boolean;
+  payment: "Created" | "Succeeded" | "Failed" | null;
+};
+
 /** Fired after anything is saved, so the sidebar counts can catch up. */
 export const DATA_CHANGED = "bakeflow:data-changed";
 
@@ -690,6 +698,14 @@ export const api = {
         !value.failed.every((f) => record(f) && typeof f.detail === "string"))
       return invalid();
     return { published: value.published.length, failed: value.failed.map((f) => (f as { detail: string }).detail) };
+  },
+  async ownerOrders(): Promise<OwnerOrder[]> {
+    const value = await request("/owner/orders");
+    if (!record(value) || !Array.isArray(value.orders) || !value.orders.every((o) =>
+      record(o) && ["id", "customer", "summary", "requiredAt", "status"].every((k) => typeof o[k] === "string") &&
+      typeof o.accepted === "boolean" && (o.quote === null || (record(o.quote) && money(o.quote.total)))))
+      return invalid();
+    return value.orders as OwnerOrder[];
   },
   async quoteQueue(): Promise<QuoteQueueItem[]> {
     const value = await request("/finance/quotes");

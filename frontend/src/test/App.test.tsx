@@ -83,6 +83,26 @@ it("shows a summary without saving until the customer confirms", async () => {
   }));
 });
 
+it("shows the owner every order, including one the customer accepted and paid", async () => {
+  const order = (id: string, status: string, change: Record<string, unknown> = {}) => ({
+    id, customer: "Demo Customer", summary: "24 Vanilla cupcake", requiredAt: "2027-10-02T02:00:00Z", status,
+    createdAt: "2026-11-01T00:00:00Z", quote: null, accepted: false, payment: null, ...change });
+  fetchMock.mockImplementation(async (url: string) =>
+    url === "/api/session" ? response(session("Owner")) :
+    url === "/api/owner/orders" ? response({ orders: [
+      order("aaaaaaaa-1", "Draft"),
+      order("bbbbbbbb-2", "Confirmed", { quote: { version: 1, total: "94.23", customerDecision: "Accepted" }, accepted: true, payment: "Succeeded" }),
+    ] }) : response({ orders: [] }));
+  location.hash = "#/owner/orders";
+  render(<App />);
+  const paid = (await screen.findByRole("rowheader", { name: "bbbbbbbb" })).closest("tr")!;
+  expect(paid).toHaveTextContent("$94.23");
+  expect(paid).toHaveTextContent("accepted");
+  expect(paid).toHaveTextContent("Paid");
+  expect(within(paid).getByText("Confirmed")).toHaveAttribute("data-status", "Confirmed");
+  expect(screen.getByRole("rowheader", { name: "aaaaaaaa" }).closest("tr")).toHaveTextContent("Not priced yet");
+});
+
 it("tells the customer a request went to the owner, and shows it next to the form", async () => {
   const user = userEvent.setup();
   const referred = { ...preview, confirmationToken: null, questions: [], ownerReview: { id: "r1" },
@@ -260,9 +280,9 @@ it("lets an owner navigate live order reviews and remaining placeholder pages", 
     if (title === "Orders") expect(screen.getByRole("heading", { name: "Order change reviews" })).toBeInTheDocument();
     else expect(screen.getByText(/This page is a placeholder/)).toBeInTheDocument();
   }
-  // Only the session and the sidebar's counts: the placeholder page itself asks for nothing.
+  // The session, the sidebar's counts and the Orders page's list; nothing else.
   const urls = new Set(fetchMock.mock.calls.map(([url]) => url));
-  expect(urls).toEqual(new Set(["/api/session", "/api/finance/quotes", "/api/inventory/items", "/api/schedules", "/api/marketing/campaigns"]));
+  expect(urls).toEqual(new Set(["/api/session", "/api/finance/quotes", "/api/inventory/items", "/api/schedules", "/api/marketing/campaigns", "/api/owner/orders"]));
 });
 
 it("rejects a malformed successful response rather than showing fabricated orders", async () => {
