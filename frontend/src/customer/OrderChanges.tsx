@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, type Order, type Session } from "../api/client";
 import { changes, type ChangeKind, type ChangePreview, type ChangeRequest, type Terms } from "../api/orderChanges";
 import { Notice } from "../components/Notice";
-import "./orderChanges.css";
 
 export function ProposedTerms({ terms }: { terms: Terms }) {
   return <dl className="change-terms">

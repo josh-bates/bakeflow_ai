@@ -163,7 +163,6 @@ export function App() {
                         {String(index + 1).padStart(2, "0")}
                       </span>
                       {value.title}
-                      {key === "orders" && <span className="soon" aria-hidden="true">Soon</span>}
                       {waiting > 0 && <span className="count" aria-hidden="true">{waiting}</span>}
                     </a>
                   );

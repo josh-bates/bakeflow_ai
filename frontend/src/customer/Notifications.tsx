@@ -43,7 +43,7 @@ export function Notifications({ refresh, onExpired }: { refresh: number; onExpir
       <summary>Notification history</summary>
       <ul className="notification-list">
         {items.map(item => <li key={item.id}>
-          <div><strong>{item.status === "InProduction" ? "In production" : item.status}</strong> <time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time></div>
+          <div><span className="badge" data-status={item.status}>{item.status === "InProduction" ? "In production" : item.status}</span> <time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString()}</time></div>
           <p>{item.message}</p>
         </li>)}
       </ul>

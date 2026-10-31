@@ -49,7 +49,7 @@ function ResolutionForm({ row, catalogue, disabled, save }: { row: Referral; cat
         <label>Agreed customisation<input maxLength={1000} value={item.customisation ?? ""} onChange={e => changeItem(i, "customisation", e.target.value || null)} /></label>
         <p>Free text does not change the selected recipe.</p>
       </fieldset>)}
-      {!data.items.length && <button type="button" disabled={disabled} onClick={() => { setData(d => ({ ...d, items: [{ product: "", quantity: null, flavour: null, theme: null, customisation: null }] })); setSelected([""]); }}>Add an item</button>}
+      {!data.items.length && <button type="button" className="secondary" disabled={disabled} onClick={() => { setData(d => ({ ...d, items: [{ product: "", quantity: null, flavour: null, theme: null, customisation: null }] })); setSelected([""]); }}>Add an item</button>}
       <label>Collection date and time (include timezone)<input required disabled={disabled} placeholder="2026-11-05T12:00:00+11:00" value={data.required_at ?? ""} onChange={e => setData(d => ({ ...d, required_at: e.target.value }))} /></label>
       <label>Collection timing<select disabled={disabled} value={data.collection_kind} onChange={e => setData(d => ({ ...d, collection_kind: e.target.value as "at" | "before" }))}><option value="at">At</option><option value="before">Before</option></select></label>
       <label>Reviewed allergen concerns<input disabled={disabled || noConcerns} required={!noConcerns} maxLength={1000} value={disclosure} onChange={e => setDisclosure(e.target.value)} /></label>
@@ -75,8 +75,8 @@ function ReviewCard({ row, owner, catalogue, session, changed, expired }: {
     catch (e) { if (e instanceof ApiError && e.status === 401) expired?.(); setError((e as Error).message); }
     finally { setBusy(false); }
   }
-  return <article className="card" aria-label={`Review ${row.id}`}>
-    <span className="badge">{labels[row.status]}</span><h3>{row.kind === "Intake" ? "Custom order review" : row.kind === "Refund" ? "Refund review" : "Production change review"}</h3>
+  return <article className="card review-card" aria-label={`Review ${row.id}`}>
+    <span className="badge" data-status={row.status}>{labels[row.status]}</span><h3>{row.kind === "Intake" ? "Custom order review" : row.kind === "Refund" ? "Refund review" : "Production change review"}</h3>
     <p className="muted">Reference {row.id} · version {row.version}</p>
     <h4>Original request</h4><p style={{ whiteSpace: "pre-wrap" }}>{row.message}</p>
     {row.orderId && <p>Order: {row.orderId}</p>}
@@ -113,10 +113,12 @@ export function OwnerReviews({ session, refreshKey, onExpired, showRequestForm =
     }).catch(e => { if (active) { setError(e.message); if (e instanceof ApiError && e.status === 401) onExpired?.(); } }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [owner, reload, refreshKey, onExpired]);
-  return <section aria-labelledby="owner-reviews-title">
-    <h2 id="owner-reviews-title">{owner ? "Order exceptions awaiting review" : "Owner reviews"}</h2>
-    <p>Custom recipes and uncertain allergen details wait for the owner before an order draft is saved.</p>
-    <button className="secondary" disabled={loading} onClick={() => setReload(n => n + 1)}>Refresh reviews</button>
+  return <section className="owner-reviews" aria-labelledby="owner-reviews-title">
+    <div className="section-heading">
+      <h2 id="owner-reviews-title">{owner ? "Order exceptions awaiting review" : "Owner reviews"}</h2>
+      <button className="secondary" disabled={loading} onClick={() => setReload(n => n + 1)}>Refresh reviews</button>
+    </div>
+    <p className="field-help">Custom recipes and uncertain allergen details wait for the owner before an order draft is saved.</p>
     {loading ? <p>Loading reviews…</p> : error ? <Notice error>{error}</Notice> : <>
       {!rows.length && <p>No owner reviews yet.</p>}
       {rows.map(row => <ReviewCard key={`${row.id}:${row.version}:${row.status}`} row={row} session={session} owner={owner} catalogue={catalogue} changed={() => setReload(n => n + 1)} expired={onExpired} />)}

@@ -100,7 +100,6 @@ h1 em, h2 em, h3 em { font-style: italic; color: var(--raspberry); }
 .toc .n { font: 400 1.06rem/1 var(--didone); font-variation-settings: "opsz" 18; color: var(--gold-light); }
 .toc a[aria-current="page"] { background: var(--blush); font-weight: 700; color: var(--ink); box-shadow: 0 8px 18px -10px rgba(0, 0, 0, .5); }
 .toc a[aria-current="page"] .n { font-style: italic; color: var(--raspberry-dark); }
-.soon { padding: 4px 8px 3px; border: 1px solid rgba(207, 229, 216, .45); border-radius: 999px; font: 700 .73rem/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: #bbd5c7; }
 .count { display: grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 999px; background: var(--wait-bg); font: 800 .8rem/1 var(--sans); color: var(--wait-ink); }
 .cameo { margin: 28px auto 0; text-align: center; }
 .cameo img { display: block; width: 138px; height: 176px; margin: 0 auto; padding: 6px; border: 1px solid var(--gold-light); border-radius: 50%; object-fit: cover; object-position: 36% 50%; }
@@ -159,10 +158,10 @@ button:disabled .ai-mark { background: #8f9a95; color: var(--white); }
 /* ---------- Status labels: the base look is "nothing to do" ---------- */
 .badge { --dot: var(--none-dot); display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 3px 12px 3px 10px; border: 1px solid var(--none-line); border-radius: 999px; background: var(--none-bg); font: 700 .86rem/1.2 var(--sans); white-space: nowrap; color: var(--none-ink); }
 .badge::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--dot); }
-.badge[data-status="AwaitingApproval"], .badge[data-status="Quoted"], .badge[data-status="Low"], .badge[data-status="Interrupted"] { --dot: var(--wait-dot); border-color: var(--wait-line); background: var(--wait-bg); color: var(--wait-ink); }
+.badge[data-status="AwaitingApproval"], .badge[data-status="Quoted"], .badge[data-status="Low"], .badge[data-status="Interrupted"], .badge[data-status="Pending"] { --dot: var(--wait-dot); border-color: var(--wait-line); background: var(--wait-bg); color: var(--wait-ink); }
 .badge[data-status="Approved"], .badge[data-status="Confirmed"], .badge[data-status="Completed"], .badge[data-status="Succeeded"] { --dot: var(--done-dot); border-color: var(--done-line); background: var(--done-bg); color: var(--done-ink); }
 .badge[data-status="NeedsRevision"], .badge[data-status="Blocked"], .badge[data-status="Cancelled"], .badge[data-status="Failed"] { --dot: var(--fail-dot); border-color: var(--fail-line); background: var(--fail-bg); color: var(--fail-ink); }
-.badge[data-status="InProgress"], .badge[data-status="InProduction"], .badge[data-status="Scheduled"], .badge[data-status="Running"] { --dot: var(--prog-dot); border-color: var(--prog-line); background: var(--prog-bg); color: var(--prog-ink); }
+.badge[data-status="InProgress"], .badge[data-status="InProduction"], .badge[data-status="Scheduled"], .badge[data-status="Running"], .badge[data-status="NeedsClarification"], .badge[data-status="AwaitingCustomer"] { --dot: var(--prog-dot); border-color: var(--prog-line); background: var(--prog-bg); color: var(--prog-ink); }
 
 /* ---------- Cards and messages ---------- */
 .card { padding: 28px 32px 30px; border: 1px solid var(--line); border-radius: 4px; background: var(--white); box-shadow: var(--shadow); }
@@ -206,6 +205,9 @@ textarea::placeholder { color: #66756f; }
 input:focus, select:focus, textarea:focus { border-color: var(--green); outline: 2px solid transparent; box-shadow: 0 0 0 3px rgba(178, 58, 99, .2); }
 input[aria-invalid="true"] { border-color: var(--fail-ink); }
 input:disabled, select:disabled, textarea:disabled { background: #f3f1ec; }
+input[type="checkbox"] { flex: none; width: 18px; min-height: 18px; margin: 0; padding: 0; }
+/* A checkbox's label reads as a sentence, not as a field caption. */
+label:has(> input[type="checkbox"]) { display: flex; align-items: center; gap: 10px; font: 600 .95rem/1.4 var(--sans); letter-spacing: 0; text-transform: none; }
 .inline-form { display: flex; align-items: center; gap: 8px; }
 .inline-form input { width: 7.5em; min-height: 38px; margin: 0; padding: 6px 10px; }
 /* Only the row being edited offers Save, so a table of levels isn't a wall of buttons. */
@@ -264,6 +266,40 @@ input:disabled, select:disabled, textarea:disabled { background: #f3f1ec; }
 .clarify summary { font-weight: 700; cursor: pointer; }
 .clarify ol { margin: 8px 0 0; padding-left: 1.4rem; }
 .clarify > .text-button { margin-top: 10px; }
+
+/* ---------- Order updates, changes and owner reviews ---------- */
+.order-notifications, .order-changes, .owner-reviews { margin-top: 28px; }
+.order-notifications > p { color: var(--ink-2); }
+.order-notifications summary { padding: 8px 0; font-weight: 700; cursor: pointer; }
+.notification-list { max-height: 22rem; margin: 8px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.notification-list li { padding: 14px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.notification-list li > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; }
+.notification-list time { font-size: .88rem; font-variant-numeric: tabular-nums; color: var(--muted); }
+.notification-list p { margin: 6px 0 0; }
+.order-changes form label { margin: 16px 0 0; }
+.order-changes textarea { min-height: 6rem; margin-top: 8px; }
+.order-changes form > button { margin-top: 2px; }
+.order-changes > form ~ .section-heading { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--line); }
+.change-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+.change-request { padding: 20px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.change-request:last-child { padding-bottom: 0; }
+.change-request h3, .change-request h4 { margin: 0 0 6px; font: 700 1.06rem/1.35 var(--sans); }
+.change-request p { margin: 4px 0; }
+.change-terms { display: grid; grid-template-columns: minmax(8rem, 1fr) 2fr; gap: 6px 16px; margin: 10px 0; }
+.change-terms dt { color: var(--muted); }
+.change-terms dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.owner-reviews > .field-help { margin: 8px 0 0; }
+.owner-reviews > .card { margin-top: 18px; }
+.review-card > .badge { margin-bottom: 12px; }
+.review-card h4 { margin: 18px 0 6px; font: 700 .8rem/1.3 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.review-card form { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
+.review-card form > button, .review-card > button { margin-top: 14px; }
+.review-card label { margin: 14px 0 0; }
+.review-card textarea { min-height: 110px; margin-top: 8px; }
+.review-card fieldset { margin: 14px 0 0; padding: 14px 18px 18px; border: 1px solid var(--line); border-radius: 4px; }
+.review-card legend { padding: 0 6px; font-weight: 700; }
+.review-card dl { display: grid; grid-template-columns: minmax(8rem, 1fr) 2fr; gap: 6px 16px; }
+.review-card dd { margin: 0; }
 
 /* ---------- Inventory ---------- */
 .stock-grid > .card { margin-top: 0; }

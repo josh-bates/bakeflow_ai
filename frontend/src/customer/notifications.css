@@ -1,8 +1,0 @@
-.order-notifications { margin-block: 1.5rem; }
-.order-notifications h2 { margin-top: 0; }
-.order-notifications summary { cursor: pointer; padding-block: .5rem; }
-.notification-list { list-style: none; padding: 0; max-height: 22rem; overflow-y: auto; }
-.notification-list li { border-top: 1px solid currentColor; padding: 1rem 0; overflow-wrap: anywhere; }
-.notification-list li > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem 1rem; }
-.notification-list time { font-size: .85rem; }
-.notification-list p { margin-bottom: 0; }
