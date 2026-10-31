@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { App } from "../App";
@@ -81,6 +81,34 @@ it("shows a summary without saving until the customer confirms", async () => {
     body: JSON.stringify({ confirmationToken: "signed-summary" }),
     headers: expect.objectContaining({ "X-CSRF-Token": "test-csrf" }),
   }));
+});
+
+it("tells the customer a request went to the owner, and shows it next to the form", async () => {
+  const user = userEvent.setup();
+  const referred = { ...preview, confirmationToken: null, questions: [], ownerReview: { id: "r1" },
+    issues: ["Your request is pending bakery owner review. No draft has been saved. See Owner reviews below."] };
+  const review = { id: "r1", version: 1, kind: "Intake", status: "Pending", orderId: null, message: "A gluten-free cake",
+    summary: null, conversation: [], resolution: null, createdAt: "2026-11-01T00:00:00Z" };
+  let sent = false;
+  fetchMock.mockImplementation(async (url: string) =>
+    url === "/api/session" ? response(session()) :
+    url === "/api/order-requests" ? (sent = true, response(referred)) :
+    url === "/api/exception-requests" ? response({ requests: sent ? [review] : [] }) : response({ orders: [] }));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  await screen.findByLabelText("What would you like to order?");
+  // Nothing under review yet, so there is no empty section.
+  expect(screen.queryByRole("heading", { name: "Requests with the bakery owner" })).not.toBeInTheDocument();
+
+  await user.type(screen.getByLabelText("What would you like to order?"), "A gluten-free cake");
+  await user.click(screen.getByRole("button", { name: /Send order request/ }));
+
+  expect(await screen.findByText("Sent to the bakery owner for review.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Confirm and save draft" })).not.toBeInTheDocument();
+  expect(screen.queryByText("A few details before we continue")).not.toBeInTheDocument();
+  const reviews = await screen.findByRole("heading", { name: "Requests with the bakery owner" });
+  // It sits above the orders list, not at the bottom of the page.
+  expect(reviews.compareDocumentPosition(screen.getByRole("heading", { name: "Your orders" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 it("blocks incomplete summaries and lets the customer correct the request", async () => {

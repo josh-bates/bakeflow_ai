@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { OwnerReviews } from "../components/OwnerReviews";
@@ -92,4 +92,19 @@ it("labels an acknowledged refund as review only, never as money refunded", asyn
   row = { ...row, kind: "Refund", status: "Completed", resolution: { summary: null, recipes: [], note: "Owner will discuss the refund." } };
   render(<OwnerReviews session={session} />);
   expect(await screen.findByText(/No refund, order change or production change has been applied/)).toBeInTheDocument();
+});
+
+it("folds finished reviews away and keeps open ones in view", async () => {
+  const row = (id: string, status: string) => ({ id, version: 1, kind: "Refund", status, orderId: "o1", message: `Request ${id}`,
+    summary: null, conversation: [], resolution: null, createdAt: "2026-11-01T00:00:00Z" });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(
+    url === "/api/exception-requests" ? { requests: [row("open-1", "Pending"), row("done-1", "Completed"), row("done-2", "Closed")] } : { products: [] }),
+    { status: 200, headers: { "Content-Type": "application/json" } })));
+  render(<OwnerReviews session={{ user: { displayName: "Owner", role: "Owner" }, mode: "mock", csrfToken: "t" } as never} />);
+  expect(await screen.findByText("Request open-1")).toBeInTheDocument();
+  const finished = screen.getByText(/Finished reviews/).closest("details")!;
+  expect(finished).not.toHaveAttribute("open");
+  expect(within(finished).getByText("2")).toBeInTheDocument();
+  expect(within(finished).getByText("Request done-1")).toBeInTheDocument();
+  expect(within(finished).queryByText("Request open-1")).not.toBeInTheDocument();
 });

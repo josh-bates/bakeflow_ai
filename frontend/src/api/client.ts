@@ -18,7 +18,11 @@ export type OrderSummary = {
   allergen_concerns: string[] | null;
   budget: string | null;
 };
-export type Submission = { summary: OrderSummary; issues: string[]; questions: string[]; confirmationToken: string | null };
+export type Submission = {
+  summary: OrderSummary; issues: string[]; questions: string[]; confirmationToken: string | null;
+  /** Set when the request went to the owner for review (BAKE-17) instead of becoming a draft. */
+  ownerReview?: unknown;
+};
 export type DraftReceipt = { orderId: string; status: "Draft" };
 /** Stock quantities are decimal strings with three places, never floats (BAKE-32). */
 export type StockItem = {
