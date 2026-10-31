@@ -4,9 +4,18 @@ An accepted quote takes its order out of the quote queue; this list is where
 the owner still sees it, with the accepted total and the payment state.
 """
 
+import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.test_quote_routes import app, login, priced_order  # noqa: F401  (fixture)
+from app.config import Settings
+from app.main import create_app
+from tests.integration.test_quote_routes import login, priced_order
+
+
+@pytest.fixture
+def app(database_url, seeded):
+    return create_app(Settings(_env_file=None, database_url=database_url,
+                               environment="test", app_secret="test-secret-" * 4))
 
 
 def listed(client, order_id) -> dict:
