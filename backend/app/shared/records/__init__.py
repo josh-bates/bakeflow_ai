@@ -24,7 +24,12 @@ from app.shared.records.audit import AuditEntry, ConstraintGuard
 from app.shared.records.catalogue import InventoryItem, Product, Recipe, RecipeIngredient
 from app.shared.records.deductions import OrderDeduction, OrderDeductionLine
 from app.shared.records.finance import MockPayment, Quote, Transaction
-from app.shared.records.marketing import Campaign, CampaignProduct, MarketingContent
+from app.shared.records.marketing import (
+    Campaign,
+    CampaignProduct,
+    MarketingContent,
+    MockPublication,
+)
 from app.shared.records.order_changes import OrderChangeRequest
 from app.shared.records.notifications import Notification, WorkflowTransition
 from app.shared.records.orders import Order, OrderItem
@@ -47,6 +52,7 @@ __all__ = [
     "Campaign",
     "CampaignProduct",
     "ConstraintGuard",
+    "MockPublication",
     "Customer",
     "CustomerDecision",
     "InventoryItem",

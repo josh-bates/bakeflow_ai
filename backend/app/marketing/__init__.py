@@ -25,6 +25,14 @@ from app.marketing.content import (
     ContentStatus,
     ExportOutcome,
 )
+from app.marketing.publishing import (
+    ChannelError,
+    ContentPublisher,
+    MockSocialChannel,
+    PublicationStatus,
+    PublishOutcome,
+    PublishStatus,
+)
 from app.marketing.summary import (
     MIN_LEDGER_TRANSACTIONS,
     SOLD_STATUSES,
@@ -51,7 +59,13 @@ __all__ = [
     "ContentPlanner",
     "ContentProposal",
     "ContentStatus",
+    "ChannelError",
+    "ContentPublisher",
     "ExportOutcome",
+    "MockSocialChannel",
+    "PublicationStatus",
+    "PublishOutcome",
+    "PublishStatus",
     "MarketingAgent",
     "MarketingService",
     "PlanOutcome",
