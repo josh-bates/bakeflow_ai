@@ -81,6 +81,7 @@ export type ProfitLine = {
   margin: string | null;
   transactions: number;
 };
+export type ExplainedProfitability = Profitability & { explanation: string | null; notice: string | null };
 export type Profitability = {
   overall: ProfitLine;
   general: ProfitLine;
@@ -171,6 +172,18 @@ export type CustomerQuote = {
   customerDecision: "Pending" | "Accepted" | "Rejected";
 };
 export type ExtraCost = { description: string; amount: string };
+/** BAKE-39: a local mock payment. The amount always comes from the accepted quote. */
+export type Payment = {
+  id: string;
+  orderId: string;
+  amount: string;
+  status: "Created" | "Succeeded" | "Failed";
+  paid: boolean;
+  createdAt: string;
+  processedAt: string | null;
+  /** Why a success could not be recorded, when the payment settled as Failed instead. */
+  reason?: string | null;
+};
 
 export class ApiError extends Error {
   constructor(
@@ -259,6 +272,19 @@ function ownerQuote(value: unknown): boolean {
     (value.explanation === null || typeof value.explanation === "string")
   );
 }
+function payment(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.id === "string" &&
+    typeof value.orderId === "string" &&
+    money(value.amount) &&
+    ["Created", "Succeeded", "Failed"].includes(String(value.status)) &&
+    typeof value.paid === "boolean" &&
+    typeof value.createdAt === "string" &&
+    (value.processedAt === null || typeof value.processedAt === "string") &&
+    (value.reason === undefined || value.reason === null || typeof value.reason === "string")
+  );
+}
 function customerQuote(value: unknown): boolean {
   return (
     record(value) &&
@@ -295,6 +321,21 @@ function schedule(value: unknown): boolean {
     scheduleVersion(value.latest) &&
     (value.released === null || scheduleVersion(value.released))
   );
+}
+function validProfitability(value: unknown): Profitability {
+  if (
+    !record(value) ||
+    !profitLine(value.overall) ||
+    !profitLine(value.general) ||
+    !Array.isArray(value.byOrder) ||
+    !value.byOrder.every((o) => profitLine(o) && record(o) && typeof o.orderId === "string") ||
+    !Array.isArray(value.byProduct) ||
+    !value.byProduct.every(
+      (p) => profitLine(p) && record(p) && typeof p.productId === "string" && typeof p.name === "string",
+    )
+  )
+    return invalid();
+  return value as Profitability;
 }
 function stockItem(i: unknown): boolean {
   return (
@@ -436,20 +477,19 @@ export const api = {
     return { ...value, questions: value.questions ?? [] } as Submission;
   },
   async profitability(): Promise<Profitability> {
-    const value = await request("/finance/profitability");
+    return validProfitability(await request("/finance/profitability"));
+  },
+  /** UC-06 steps 5-7 (BAKE-34): the same figures, explained when the explanation passes its check. */
+  async explainProfitability(csrfToken: string): Promise<ExplainedProfitability> {
+    const value = await request("/finance/profitability/explanation", JSON_POST(csrfToken, {}));
+    const figures = validProfitability(value);
     if (
       !record(value) ||
-      !profitLine(value.overall) ||
-      !profitLine(value.general) ||
-      !Array.isArray(value.byOrder) ||
-      !value.byOrder.every((o) => profitLine(o) && record(o) && typeof o.orderId === "string") ||
-      !Array.isArray(value.byProduct) ||
-      !value.byProduct.every(
-        (p) => profitLine(p) && record(p) && typeof p.productId === "string" && typeof p.name === "string",
-      )
+      !(value.explanation === null || typeof value.explanation === "string") ||
+      !(value.notice === null || typeof value.notice === "string")
     )
       return invalid();
-    return value as Profitability;
+    return { ...figures, explanation: value.explanation as string | null, notice: value.notice as string | null };
   },
   async schedules(): Promise<Schedules> {
     const value = await request("/schedules");
@@ -540,6 +580,25 @@ export const api = {
       `/quotes/${encodeURIComponent(quote.id)}/versions/${quote.version}/reject`, JSON_POST(csrfToken, {}));
     if (!customerQuote(value)) return invalid();
     return value as CustomerQuote;
+  },
+  /** The customer's payments for one order, oldest first (BAKE-39). */
+  async payments(orderId: string): Promise<Payment[]> {
+    const value = await request(`/orders/${encodeURIComponent(orderId)}/payments`);
+    if (!record(value) || !Array.isArray(value.payments) || !value.payments.every(payment)) return invalid();
+    return value.payments as Payment[];
+  },
+  /** Starts a payment for the accepted quote's total, or returns the open one. */
+  async startPayment(orderId: string, csrfToken: string): Promise<Payment> {
+    const value = await request(`/orders/${encodeURIComponent(orderId)}/payments`, JSON_POST(csrfToken, {}));
+    if (!payment(value)) return invalid();
+    return value as Payment;
+  },
+  /** The mock provider's checkout: the customer chooses the outcome; no card data is sent. */
+  async mockCheckout(paymentId: string, outcome: "Succeeded" | "Failed", csrfToken: string): Promise<Payment> {
+    const value = await request(`/payments/${encodeURIComponent(paymentId)}/mock-checkout`,
+      JSON_POST(csrfToken, { outcome }));
+    if (!payment(value)) return invalid();
+    return value as Payment;
   },
   /** Records that a released task has started or is done; the order's last one done deducts its stock. */
   async recordTaskProgress(scheduleId: string, taskId: string, status: "InProgress" | "Completed",
