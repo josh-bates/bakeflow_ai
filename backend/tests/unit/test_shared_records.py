@@ -46,6 +46,7 @@ EXTENSION_TABLES = {
     "ai_requests",
     "inventory_receipts",
     "mock_payments",
+    "mock_publications",
     "order_deductions",
     "order_deduction_lines",
 }

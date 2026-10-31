@@ -14,15 +14,23 @@ from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.shared.records._common import RowVersioned, Timestamp, new_id, utcnow
+from app.shared.records._common import (
+    RecordMixin,
+    RowVersioned,
+    Timestamp,
+    new_id,
+    utcnow,
+)
 
 
 class Campaign(RowVersioned, Base):
@@ -98,3 +106,56 @@ class MarketingContent(RowVersioned, Base):
         changing it is a new version needing fresh approval [O4].
         """
         return bool(self.platform and self.body.strip() and self.scheduled_at)
+
+
+class MockPublication(RecordMixin, Base):
+    """One attempt to publish a content version to a channel (BAKE-40 [O5]).
+
+    The optional feature. The channel is a local mock: there are no real
+    social accounts and no tokens anywhere in the system.
+
+    A content version is published **at most once**, and the database says so
+    rather than the code promising it: the partial unique index allows any
+    number of failed attempts but only one claimed or published row per
+    (content_id, content_version). An attempt claims its row as ``Publishing``
+    before it posts, so neither a retry nor an overlapping publish can
+    double-post, and a retry after a failure is free to try again.
+    """
+
+    __tablename__ = "mock_publications"
+    __record_type__ = "MockPublication"
+    __record_id__ = "publication_id"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["content_id", "content_version"],
+            ["marketing_contents.content_id", "marketing_contents.version"],
+            name="fk_mock_publications_content",
+        ),
+        CheckConstraint("status IN ('Publishing', 'Published', 'Failed')", name="status"),
+        # A published row has its channel reference; a failed one has the error.
+        CheckConstraint(
+            "(status = 'Published') = (reference IS NOT NULL)", name="reference_iff_published"
+        ),
+        CheckConstraint(
+            "(status = 'Published') = (published_at IS NOT NULL)", name="time_iff_published"
+        ),
+        CheckConstraint("(status = 'Failed') = (error IS NOT NULL)", name="error_iff_failed"),
+        Index(
+            "uq_mock_publications_published",
+            "content_id",
+            "content_version",
+            unique=True,
+            postgresql_where=text("status IN ('Publishing', 'Published')"),
+        ),
+    )
+
+    publication_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=new_id)
+    content_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    content_version: Mapped[int] = mapped_column(Integer)
+    channel: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16))
+    # The mock channel's identifier for the post it accepted.
+    reference: Mapped[str | None] = mapped_column(String(200))
+    error: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime | None] = mapped_column(Timestamp)
+    created_at: Mapped[datetime] = mapped_column(Timestamp, default=utcnow)
