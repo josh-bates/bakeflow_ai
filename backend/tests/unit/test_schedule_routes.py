@@ -1,4 +1,4 @@
-"""BAKE-21: the production plan routes are owner-only and check their input."""
+"""BAKE-21, BAKE-33: the production plan routes are owner-only and check their input."""
 
 import uuid
 
@@ -12,6 +12,7 @@ from app.inventory_production.routes import make_router
 
 PLAN = {"startDate": "2026-11-05", "endDate": "2026-11-05"}
 DECISION = {"version": 1, "decision": "Approved"}
+PROGRESS = f"/api/schedules/{uuid.uuid4()}/tasks/{uuid.uuid4()}/progress"
 
 
 def client_as(role: str | None) -> TestClient:
@@ -33,6 +34,7 @@ ROUTES = [
     ("post", "/api/schedules", PLAN),
     ("post", f"/api/schedules/{uuid.uuid4()}/revisions", PLAN),
     ("post", f"/api/schedules/{uuid.uuid4()}/decision", DECISION),
+    ("post", PROGRESS, {"status": "Completed"}),
 ]
 
 
@@ -60,3 +62,8 @@ def test_a_plan_covers_at_most_two_weeks():
 def test_decision_must_name_one_version_and_a_known_decision(body):
     url = f"/api/schedules/{uuid.uuid4()}/decision"
     assert client_as("Owner").post(url, json=body).status_code == 422
+
+
+@pytest.mark.parametrize("body", [{"status": "Planned"}, {"status": "Blocked"}, {}, {"status": "Completed", "version": 2}])
+def test_progress_is_started_or_done_only(body):
+    assert client_as("Owner").post(PROGRESS, json=body).status_code == 422

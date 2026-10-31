@@ -8,7 +8,10 @@ handlers, and records the signed-in owner as the transaction's actor.
 
 from __future__ import annotations
 
+import logging
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
@@ -20,6 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.auth.access import Identity, require_owner
 from app.config import Settings
 from app.db.session import get_sessionmaker
+from app.llm.gateway import ILLMClient, LLMCallFailed, LLMGateway
 from app.pricing_bookkeeping.ledger import (
     DuplicateTransaction,
     LedgerEntry,
@@ -28,9 +32,13 @@ from app.pricing_bookkeeping.ledger import (
     TransactionInput,
     TransactionRejected,
 )
-from app.pricing_bookkeeping.profitability import ProfitabilityService, ProfitLine
+from app.pricing_bookkeeping.fixtures import mock_profit_explainer
+from app.pricing_bookkeeping.profit_explanation import ProfitExplainer, profit_figures
+from app.pricing_bookkeeping.profitability import ProfitabilityService, ProfitabilitySummary, ProfitLine
 from app.pricing_bookkeeping.quotation import ValidationIssue
 from app.shared.store import StoreError, ValidatedRecordStore
+
+logger = logging.getLogger(__name__)
 
 
 class TransactionBody(BaseModel):
@@ -74,8 +82,58 @@ def line_json(line: ProfitLine) -> dict:
     }
 
 
-def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None) -> APIRouter:
+def check_period(start: datetime | None, end: datetime | None) -> None:
+    for name, bound in (("start", start), ("end", end)):
+        if bound is not None and bound.utcoffset() is None:
+            raise HTTPException(422, f"{name} needs a time zone, e.g. 2026-10-01T00:00:00+10:00")
+    if start is not None and end is not None and end <= start:
+        raise HTTPException(422, "end must be after start")
+
+
+def profitability_json(summary: ProfitabilitySummary, start: datetime | None, end: datetime | None) -> dict:
+    return {
+        "overall": line_json(summary.overall),
+        # Shown next to the per-order list: ingredient invoices are usually
+        # general, so per-order margins alone overstate profit (review of #20).
+        "general": line_json(summary.general),
+        "byOrder": [{"orderId": str(o.order_id), **line_json(o.line)} for o in summary.by_order],
+        "byProduct": [
+            {"productId": str(p.product_id), "name": p.name, **line_json(p.line)}
+            for p in summary.by_product
+        ],
+        "periodStart": start.isoformat() if start else None,
+        "periodEnd": end.isoformat() if end else None,
+    }
+
+
+@dataclass(frozen=True)
+class _NoProvider:
+    """Stands in when the live provider is not configured: every attempt fails (5a)."""
+
+    reason: str
+
+    def complete(self, prompt: str) -> str:
+        raise LLMCallFailed(self.reason)
+
+
+def make_router(
+    settings: Settings,
+    *,
+    store: ValidatedRecordStore | None = None,
+    client_factory: Callable[[dict, dict], ILLMClient] | None = None,
+) -> APIRouter:
     router = APIRouter()
+
+    def llm_client(figures: dict, names: dict) -> ILLMClient:
+        """The BAKE-34 explainer's model client: Mock, live, or one that always fails (5a)."""
+        if client_factory is not None:
+            return client_factory(figures, names)
+        if settings.llm_mode == "mock":
+            return mock_profit_explainer(figures, names)
+        try:
+            return LLMGateway.from_environment()
+        except (LLMCallFailed, ValueError) as exc:
+            return _NoProvider(str(exc))
 
     def ledger() -> LedgerService:
         actual_store = store
@@ -147,27 +205,37 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
         ``start`` / ``end`` are optional ISO times with a time zone; the period
         includes its start and excludes its end.
         """
-        for name, bound in (("start", start), ("end", end)):
-            if bound is not None and bound.utcoffset() is None:
-                raise HTTPException(422, f"{name} needs a time zone, e.g. 2026-10-01T00:00:00+10:00")
-        if start is not None and end is not None and end <= start:
-            raise HTTPException(422, "end must be after start")
+        check_period(start, end)
         try:
             summary = profitability_service().summary(period_start=start, period_end=end)
         except (StoreError, SQLAlchemyError):
             raise HTTPException(503, "Profitability could not be loaded; please retry.") from None
-        return {
-            "overall": line_json(summary.overall),
-            # Shown next to the per-order list: ingredient invoices are usually
-            # general, so per-order margins alone overstate profit (review of #20).
-            "general": line_json(summary.general),
-            "byOrder": [{"orderId": str(o.order_id), **line_json(o.line)} for o in summary.by_order],
-            "byProduct": [
-                {"productId": str(p.product_id), "name": p.name, **line_json(p.line)}
-                for p in summary.by_product
-            ],
-            "periodStart": start.isoformat() if start else None,
-            "periodEnd": end.isoformat() if end else None,
+        return profitability_json(summary, start, end)
+
+    @router.post("/api/finance/profitability/explanation")
+    def explain_profitability(
+        start: datetime | None = None,
+        end: datetime | None = None,
+        owner: Identity = Depends(require_owner),
+    ):
+        """UC-06 steps 5-7: the same figures, with an explanation when one passes the check.
+
+        Only on request, so the Finance page never waits on a model. If no
+        explanation is usable (5a), the figures come back unchanged with a notice.
+        """
+        check_period(start, end)
+        try:
+            summary = profitability_service().summary(period_start=start, period_end=end)
+        except (StoreError, SQLAlchemyError):
+            raise HTTPException(503, "Profitability could not be loaded; please retry.") from None
+        explained = ProfitExplainer(llm_client(*profit_figures(summary))).explain(
+            summary, actor=str(owner.user_id)
+        )
+        if explained.text is None:
+            logger.warning("No usable profit explanation: %s", "; ".join(explained.problems))
+        return profitability_json(summary, start, end) | {
+            "explanation": explained.text,
+            "notice": explained.notice or None,
         }
 
     return router
