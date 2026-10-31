@@ -21,7 +21,7 @@ from app.shared.store import StoreError, ValidatedRecordStore
 
 def template(transition: WorkflowTransition) -> str:
     # These are historical updates, not a claim about the order's current stage.
-    return f"Order {transition.order_id}: {EXPLANATIONS[transition.to_state][0]}"
+    return f"Order #{str(transition.order_id)[:8]}: {EXPLANATIONS[transition.to_state][0]}"
 
 
 def deliver_notification(store: ValidatedRecordStore, transition_id: uuid.UUID) -> None:
