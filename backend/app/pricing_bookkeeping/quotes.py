@@ -253,6 +253,11 @@ class QuoteService:
             self._decide(session, quote, ApprovalDecision.REJECTED, owner_id)
             return QuoteView.of(current)
 
+    def order_ref(self, order_id: uuid.UUID) -> RecordRef:
+        """The order as it stands now, e.g. as the subject of its quote's AI request."""
+        with self.store.unit_of_work() as session:
+            return self.store.ref(self._order(session, order_id))
+
     def latest(self, order_id: uuid.UUID) -> QuoteView | None:
         """The owner's view: the latest version of an order's quote, approved or not."""
         with self.store.unit_of_work() as session:

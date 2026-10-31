@@ -17,13 +17,16 @@ Customer routes check that the order is theirs; another customer's order is
 - ``POST /api/quotes/{id}/versions/{v}/accept`` and ``/reject``.
 
 Money is always a decimal string, never a JSON number. The figures come only
-from ``FinanceService``; until BAKE-22's explainer is wired in, a quote is
-saved without an explanation and flagged for manual review (UC-05 4a).
+from ``FinanceService``. BAKE-22's ``QuoteExplainer`` writes the explanation
+outside any transaction; if none passes its check within three attempts, the
+quote is saved without one and flagged for manual review (UC-05 4a).
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -34,8 +37,18 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.auth.access import Identity, require_owner
 from app.config import Settings
 from app.db.session import get_sessionmaker
-from app.pricing_bookkeeping.quotation import AdditionalCost
-from app.pricing_bookkeeping.quotes import QueueItem, QuoteError, QuoteService, QuoteView
+from app.llm.gateway import ILLMClient, LLMCallFailed, LLMGateway
+from app.pricing_bookkeeping.agent import PricingBookkeepingAgent, QuoteExplainer
+from app.pricing_bookkeeping.fixtures import mock_explainer
+from app.pricing_bookkeeping.quotation import AdditionalCost, QuoteCalculation
+from app.pricing_bookkeeping.quotes import (
+    Explain,
+    ExplanationOutcome,
+    QueueItem,
+    QuoteError,
+    QuoteService,
+    QuoteView,
+)
 from app.sales.intake import CustomerIdentity
 from app.sales.routes import current_customer
 from app.shared.approvals import NotTheOwner
@@ -110,8 +123,49 @@ def costs(body: PricingBody | None) -> list[AdditionalCost]:
     return result
 
 
-def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None) -> APIRouter:
+@dataclass(frozen=True)
+class _NoProvider:
+    """Stands in when the live provider is not configured: every attempt fails (4a)."""
+
+    reason: str
+
+    def complete(self, prompt: str) -> str:
+        raise LLMCallFailed(self.reason)
+
+
+def make_router(
+    settings: Settings,
+    *,
+    store: ValidatedRecordStore | None = None,
+    client_factory: Callable[[QuoteCalculation, int | None], ILLMClient] | None = None,
+) -> APIRouter:
     router = APIRouter()
+
+    def llm_client(calc: QuoteCalculation, units: int | None) -> ILLMClient:
+        if client_factory is not None:
+            return client_factory(calc, units)
+        if settings.llm_mode == "mock":
+            return mock_explainer(calc, units)
+        try:
+            return LLMGateway.from_environment()
+        except (LLMCallFailed, ValueError) as exc:
+            return _NoProvider(str(exc))
+
+    def explainer(subject: RecordRef, owner_id: uuid.UUID) -> Explain:
+        """BAKE-22's explainer in the shape ``QuoteService`` calls (UC-05 step 4).
+
+        ``subject`` is what the AI request is recorded against: the order being
+        priced, or the quote version being revised.
+        """
+
+        def explain(calc: QuoteCalculation, units: int | None) -> ExplanationOutcome:
+            explained = QuoteExplainer(PricingBookkeepingAgent(llm_client(calc, units))).explain(
+                calc, subject=subject, actor=str(owner_id), units=units
+            )
+            text = explained.explanation.narrative if explained.explanation else None
+            return ExplanationOutcome(text, requires_manual_review=explained.requires_manual_review)
+
+        return explain
 
     def quotes() -> QuoteService:
         actual_store = store
@@ -141,7 +195,9 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
     def draft(order_id: uuid.UUID, body: PricingBody | None = None,
               owner: Identity = Depends(require_owner)):
         extra = costs(body)
-        view = run(lambda: quotes().draft(order_id, owner_id=owner.user_id, additional_costs=extra))
+        explain = explainer(run(lambda: quotes().order_ref(order_id)), owner.user_id)
+        view = run(lambda: quotes().draft(order_id, owner_id=owner.user_id, additional_costs=extra,
+                                          explain=explain))
         return JSONResponse(status_code=201, content=quote_json(view))
 
     @router.post("/api/finance/quotes/{quote_id}/versions/{version}/revise")
@@ -149,7 +205,9 @@ def make_router(settings: Settings, *, store: ValidatedRecordStore | None = None
                owner: Identity = Depends(require_owner)):
         extra = costs(body)
         ref = RecordRef("Quote", quote_id, version)
-        view = run(lambda: quotes().revise(ref, owner_id=owner.user_id, additional_costs=extra))
+        explain = explainer(ref, owner.user_id)
+        view = run(lambda: quotes().revise(ref, owner_id=owner.user_id, additional_costs=extra,
+                                           explain=explain))
         return JSONResponse(status_code=201, content=quote_json(view))
 
     @router.post("/api/finance/quotes/{quote_id}/versions/{version}/approve")
