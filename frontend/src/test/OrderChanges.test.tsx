@@ -68,3 +68,21 @@ it("owner sees the calculated quotation before approving its exact request versi
   await user.click(screen.getByRole("button",{name:"Approve this revised quotation"}));
   await waitFor(() => expect(changes.decide).toHaveBeenCalledWith("req-1",2,"ApproveQuote","Approved after checking","csrf"));
 });
+it("returns to sign-in when the owner review list session expires", async () => {
+  const expired = vi.fn();
+  vi.mocked(changes.list).mockRejectedValue(new ApiError(401, "Sign in again."));
+  render(<OrderChangeReviews session={session} onExpired={expired} />);
+  await waitFor(() => expect(expired).toHaveBeenCalledOnce());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+it("returns to sign-in when an owner decision session expires", async () => {
+  const expired = vi.fn();
+  vi.mocked(changes.list).mockResolvedValue([request]);
+  vi.mocked(changes.decide).mockRejectedValue(new ApiError(401, "Sign in again."));
+  render(<OrderChangeReviews session={session} onExpired={expired} />);
+  const user = userEvent.setup();
+  await user.type(await screen.findByLabelText("Reply to customer"), "Please clarify");
+  await user.click(screen.getByRole("button", { name: "Send review note" }));
+  await waitFor(() => expect(expired).toHaveBeenCalledOnce());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
