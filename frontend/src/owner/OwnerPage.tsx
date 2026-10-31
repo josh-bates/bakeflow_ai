@@ -1,3 +1,5 @@
+import { OrderChangeReviews } from "./OrderChangeReviews";
+import { OwnerReviews } from "../components/OwnerReviews";
 import type { Session } from "../api/client";
 import { AIActivityPage } from "./AIActivityPage";
 import { ApprovalsPage } from "./ApprovalsPage";
@@ -40,8 +42,8 @@ export const ownerPages = {
 };
 export type OwnerPageName = keyof typeof ownerPages;
 
-export function OwnerPage({ page, session }: { page: OwnerPageName; session: Session }) {
-  if (page === "approvals") return <ApprovalsPage session={session} />;
+export function OwnerPage({ page, session, onExpired }: { page: OwnerPageName; session: Session; onExpired?: () => void }) {
+  if (page === "approvals") return <><ApprovalsPage session={session} /><OwnerReviews session={session} /></>;
   if (page === "finance") return <FinancePage session={session} />;
   if (page === "inventory") return <InventoryPage session={session} />;
   if (page === "schedules") return <SchedulesPage session={session} />;
@@ -55,7 +57,8 @@ export function OwnerPage({ page, session }: { page: OwnerPageName; session: Ses
         <h1>{content.title}</h1>
         <p>{content.description}</p>
       </section>
-      <section className="card placeholder">
+      {page === "orders" && <OrderChangeReviews session={session} onExpired={onExpired} />}
+      {page !== "orders" && <section className="card placeholder">
         <span className="stamp" aria-hidden="true">
           ◇
         </span>
@@ -66,7 +69,7 @@ export function OwnerPage({ page, session }: { page: OwnerPageName; session: Ses
           This page is a placeholder. No live records or actions are available
           here yet.
         </div>
-      </section>
+      </section>}
     </>
   );
 }

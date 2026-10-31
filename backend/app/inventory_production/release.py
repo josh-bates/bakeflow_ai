@@ -252,7 +252,10 @@ class ScheduleRelease:
                 finished.add(order_id)
             if order_id not in source:
                 continue  # left out by this version; released, it is replaced
-            if order.version != source[order_id].version:
+            from app.sales.changes import pending_change
+            if pending_change(session, order_id):
+                problems.append(f"{label} has a pending customer amendment or owner review.")
+            elif order.version != source[order_id].version:
                 problems.append(f"{label} has changed since this plan was made.")
             elif order_id in elsewhere:
                 problems.append(f"{label} is now in another released plan.")

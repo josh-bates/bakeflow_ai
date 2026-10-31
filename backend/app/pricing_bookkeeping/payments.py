@@ -149,6 +149,9 @@ class PaymentService:
         """Create the payment for an order's accepted quote, or return the open one."""
         with self.store.unit_of_work() as session:
             order = self._customer_order(session, order_id, customer_id, lock=True)
+            from app.sales.changes import pending_change
+            if pending_change(session, order_id):
+                raise PaymentError("CONFLICT", "Resolve the pending order request before starting a payment.")
             for payment in self._payments(session, order_id):
                 if payment.status == PaymentStatus.SUCCEEDED:
                     raise PaymentError("CONFLICT", "this order is already paid")
@@ -255,10 +258,13 @@ class PaymentService:
         )
         latest = self.store.load(session, Quote, quote.quote_id)
         ref = RecordRef("Quote", quote.quote_id, quote.version)
+        from app.sales.changes import only_closed_amendments_after
+        abandoned = only_closed_amendments_after(session, quote)
         if (
             quote.customer_decision != CustomerDecision.ACCEPTED
-            or latest.version != quote.version
-            or not self.approvals.is_approved(session, ref, ApprovalKind.QUOTATION)
+            or quote.source_order_version != order.version
+            or (latest.version != quote.version and not abandoned)
+            or not self.approvals.is_approved(session, ref, ApprovalKind.QUOTATION, current_only=not abandoned)
         ):
             raise PaymentError(
                 "APPROVAL_REQUIRED", "the order's quote is not accepted, current and approved"

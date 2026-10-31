@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "bake40_mock_publications"
-down_revision = "bake37_ai_requests"
+down_revision = "bake30_order_changes"
 branch_labels = None
 depends_on = None
 

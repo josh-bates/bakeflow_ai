@@ -10,6 +10,10 @@ import {
   type CustomerQuote,
   type Payment,
 } from "../api/client";
+import { OrderChanges } from "./OrderChanges";
+import { Notifications } from "./Notifications";
+import "./notifications.css";
+import { OwnerReviews } from "../components/OwnerReviews";
 import { Notice } from "../components/Notice";
 
 // An order confirmed from an accepted quote can be paid until it is collected.
@@ -263,6 +267,7 @@ export function CustomerPage({
           <figcaption><span>A MOMENT OF SWEETNESS</span><span>01 / Chocolate</span></figcaption>
         </figure>
       </section>
+      <Notifications refresh={reload} onExpired={onExpired} />
       <div className="customer-grid">
         <section className="card" aria-labelledby="request-title">
           <div className="request-intro">
@@ -460,6 +465,8 @@ export function CustomerPage({
           </div>
         )}
       </section>
+      <OrderChanges orders={orders} session={session} onExpired={onExpired} onChanged={() => setReload(n => n + 1)} />
+      <OwnerReviews session={session} refreshKey={result} onExpired={onExpired} showRequestForm={false} />
     </>
   );
 }

@@ -379,3 +379,14 @@ def test_content_is_not_published_once_its_campaign_is_revised(store, seeded):
     assert outcome.status is PublishStatus.CAMPAIGN_REVISED
     assert channel.feed == []
     assert publications(store) == []
+
+
+def test_the_post_is_the_approved_text_without_the_export_header(store, seeded):
+    _, _, content = ready_content(store, seeded)
+    channel = MockSocialChannel()
+
+    ContentPublisher(store, channel).publish(content.content, owner_id=seeded.owner_id)
+
+    with store.unit_of_work() as session:
+        body = store.load_ref(session, content.content).body
+    assert channel.feed[0]["text"] == body

@@ -136,7 +136,8 @@ class ContentPublisher:
                 refusal = self._refusal(session, content)
                 if refusal is not None:
                     return refusal
-                text = self.marketing.export_approved(self.store.load_ref(session, content))
+                # The post is the approved text itself, not the hand-export with its header.
+                text = self.store.load_ref(session, content).body
                 claim = MockPublication(
                     content_id=content.record_id,
                     content_version=content.version,

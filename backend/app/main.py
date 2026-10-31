@@ -54,6 +54,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from app.pricing_bookkeeping.payment_routes import make_router as make_payment_router
     app.include_router(make_payment_router(settings))
 
+    from app.sales.change_routes import make_router as make_change_router
+    app.include_router(make_change_router(settings))
+    from app.sales.notifications import make_router as make_notifications_router
+    app.include_router(make_notifications_router(settings))
+    from app.sales.referral_routes import make_router as make_referral_router
+    app.include_router(make_referral_router(settings))
     # [BAKE-37] Every AI operation in a request is saved to ai_requests [R5].
     from app.workflow.ai_requests import AIRequestLog, AIRequestMiddleware
     from app.workflow.routes import make_router as make_workflow_router

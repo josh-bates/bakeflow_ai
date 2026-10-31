@@ -213,6 +213,12 @@ session. Sign out revokes the session. See [BAKE-14 setup and API contract](docs
 for CSRF headers, shared permission dependencies and the optional local launcher.
 Deployment requires HTTPS; local development may use loopback HTTP.
 
+### Customer order changes and cancellation (BAKE-30)
+
+Use **Adjust an order** to preview a quantity/time change, cancellation or refund review. Confirm before anything is saved. Confirmed sales keep their original terms until the owner approves a revised quotation and the customer accepts it; the owner's **Orders** page contains these requests. Started work and refunds require owner review, and cancellation never refunds money or reverses recorded consumption. See [supported requests, design refinements and demo steps](docs/bake30-order-changes.md).
+### Customer order notifications (BAKE-38)
+
+Customer **Order updates** refresh automatically after recorded order transitions. Notifications are private, deduplicated and template-based, and delivery failure cannot undo an order operation. No API key or email configuration is required. This is a new Stage 2 optional feature, absent from the Stage 1 feature diagram; see [design differences, failure recovery and demo steps](docs/bake38-notifications.md).
 ### BAKE-37 low-stock alerts (optional feature, design deviation)
 
 Low-stock alerts are a **new optional feature** ([O1] in the architecture), not
