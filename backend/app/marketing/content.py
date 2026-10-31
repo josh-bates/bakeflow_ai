@@ -29,6 +29,7 @@ the same rule as a campaign, enforced in one place by ``ApprovalService``.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -48,6 +49,8 @@ from app.shared.store import ValidatedRecordStore
 from app.workflow.order_flow import AIOperationFailed, OrderStage, WorkflowService
 
 PLATFORMS = frozenset({"Instagram", "Facebook"})
+# Any dollar amount, or any bare figure written with cents.
+_BODY_PRICE = re.compile(r"\$\s*(\d[\d,]*(?:\.\d+)?)|(?<![\d.,])(\d[\d,]*\.\d{2})(?!\d)")
 
 
 class ContentStatus(StrEnum):
@@ -56,6 +59,7 @@ class ContentStatus(StrEnum):
     AI_UNAVAILABLE = "AIUnavailable"
     SCHEDULED = "Scheduled"
     NOT_APPROVED = "NotApproved"
+    CAMPAIGN_REVISED = "CampaignRevised"
     NOT_READY = "NotReady"
     NOT_IN_CALENDAR = "NotInCalendar"
 
@@ -207,6 +211,12 @@ class ContentPlanner(WorkflowService):
                     problems=("this version of the content is not approved",),
                 )
             stored = self.store.load_ref(session, content)
+            if not campaign_still_approved(self.approvals, session, stored):
+                return ContentOutcome(
+                    ContentStatus.CAMPAIGN_REVISED,
+                    content=content,
+                    problems=(CAMPAIGN_REVISED_PROBLEM,),
+                )
             if not stored.is_ready_for_export():
                 return ContentOutcome(
                     ContentStatus.NOT_READY,
@@ -239,6 +249,11 @@ class ContentPlanner(WorkflowService):
                     problems=("this version of the content is not approved",),
                 )
             stored = self.store.load_ref(session, content)
+            if not campaign_still_approved(self.approvals, session, stored):
+                return ExportOutcome(
+                    ContentStatus.CAMPAIGN_REVISED,
+                    problems=(CAMPAIGN_REVISED_PROBLEM,),
+                )
             if not stored.is_ready_for_export():
                 return ExportOutcome(
                     ContentStatus.NOT_READY,
@@ -264,9 +279,12 @@ class ContentPlanner(WorkflowService):
                 problems.append(f"product {product_id} is not in this campaign")
         with self.store.unit_of_work() as session:
             problems += self.marketing.validate_claims(session, claims)
-        for product_id, price in claims.items():
-            if f"{price:.2f}" not in proposal.body:
+        quoted = body_prices(proposal.body)
+        for price in claims.values():
+            if price not in quoted:
                 problems.append(f"the post does not quote {price:.2f} as claimed")
+        for price in sorted(quoted - set(claims.values())):
+            problems.append(f"the post quotes {price:.2f}, which is not a claimed price")
         if proposal.confidence < MIN_CONFIDENCE:
             problems.append(
                 f"the assistant's confidence ({proposal.confidence:.2f}) is too low"
@@ -344,6 +362,25 @@ def content_request(campaign: Campaign, platform: str, offered: dict) -> dict:
             for fact in sorted(offered.values(), key=lambda fact: fact.name)
         ],
     }
+
+
+def body_prices(body: str) -> set[Decimal]:
+    """Every price the post's text names, compared as amounts rather than substrings."""
+    return {
+        Decimal((dollars or figure).replace(",", ""))
+        for dollars, figure in _BODY_PRICE.findall(body)
+    }
+
+
+CAMPAIGN_REVISED_PROBLEM = "the campaign plan has changed since this content was written"
+
+
+def campaign_still_approved(
+    approvals: ApprovalService, session: Session, content: MarketingContent
+) -> bool:
+    """8a reaches the posts: content needs the campaign version it was written for."""
+    campaign = RecordRef("Campaign", content.campaign_id, content.campaign_version)
+    return approvals.is_approved(session, campaign, ApprovalKind.CAMPAIGN_PLAN)
 
 
 def claimed(proposal: ContentProposal) -> dict[uuid.UUID, Decimal]:

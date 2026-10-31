@@ -46,6 +46,14 @@ the delivery [R12]: repeating it returns the receipt already recorded without
 raising stock again, and the same source with a different quantity is refused
 (``CONFLICT``) rather than guessed at. References are trimmed and stored in
 upper case, so ``inv-001`` and ``INV-001`` are the same invoice.
+
+Low stock (BAKE-37, [O1], an AR-02 extension): each ingredient has an
+owner-set reorder level in its stock unit (``set_reorder_level``). It is low
+when its available stock is below that level; at the level is not low. The
+suggested reorder brings available stock back to twice the level, so the
+delivery does not leave it right on the line again. Alerts are worked out from
+the same snapshot as the stock levels; they never call a model, never change
+stock and never order anything.
 """
 
 from __future__ import annotations
@@ -77,11 +85,12 @@ from app.shared.records import (
     Recipe,
     ShoppingList,
 )
-from app.shared.store import StoreError
+from app.shared.store import StaleVersionError, StoreError
 
 STOCK_ACTION = "inventory.stock_check"
 RECEIPT_ACTION = "inventory.receipt_recorded"
 RECEIVE_ACTION = "inventory.stock_received"
+REORDER_ACTION = "inventory.reorder_level_set"
 _log = logging.getLogger(__name__)
 # Stock quantities are kept to 0.001 (NUMERIC(12,3)).
 _THOUSANDTHS = 1000
@@ -201,6 +210,23 @@ class StockLevel:
     committed: Decimal
     # Negative when released plans commit more than is on hand.
     available: Decimal
+    # [O1] BAKE-37: the owner's reorder level, in the stock unit.
+    reorder_level: Decimal = Decimal("0.000")
+    # The inventory item's version, for changing its reorder level.
+    version: int = 1
+
+    @property
+    def low(self) -> bool:
+        """Available stock is below the reorder level; at the level is not low.
+
+        A level of 0 alerts only when released plans commit more than is on hand.
+        """
+        return self.available < self.reorder_level
+
+    @property
+    def suggested_reorder(self) -> Decimal | None:
+        """For a low ingredient, enough to bring available stock to twice its level."""
+        return _stock(2 * self.reorder_level - self.available) if self.low else None
 
 
 @dataclass(frozen=True)
@@ -217,6 +243,12 @@ class ReceiptRejected(StoreError):
     def __init__(self, issues: tuple[ReceiptIssue, ...]):
         super().__init__("; ".join(f"{issue.field}: {issue.message}" for issue in issues))
         self.issues = issues
+
+
+class ReorderLevelRejected(StoreError):
+    """An invalid reorder level; nothing was changed."""
+
+    code = "VALIDATION_FAILED"
 
 
 class ReceiptConflict(StoreError):
@@ -503,20 +535,39 @@ class InventoryService:
                 select(InventoryItem).order_by(InventoryItem.ingredient_name, InventoryItem.item_id)
             ).all()
             committed = self.committed_needs(session)
-            levels = []
-            for item in items:
-                need = committed.get(item.item_id, Decimal(0))
-                levels.append(
-                    StockLevel(
-                        item_id=item.item_id,
-                        ingredient=item.ingredient_name,
-                        unit=item.unit,
-                        on_hand=_stock(item.quantity_on_hand),
-                        committed=_stock(need),
-                        available=_stock(item.quantity_on_hand - need),
-                    )
+            return [_level(item, committed) for item in items]
+
+    def low_stock(self) -> list[StockLevel]:
+        """BAKE-37: the ingredients below their reorder level, by name, from one snapshot."""
+        return [level for level in self.stock_levels() if level.low]
+
+    def set_reorder_level(
+        self, item_id: uuid.UUID, level: Decimal, *, expected_version: int, actor_id: uuid.UUID
+    ) -> StockLevel:
+        """BAKE-37: change one ingredient's reorder level, in its stock unit.
+
+        Only ``reorder_threshold`` changes; stock is never touched. Raises
+        ``ReorderLevelRejected`` for an invalid level, ``RecordNotFound`` for
+        an unknown item and ``StaleVersionError`` when the item changed since
+        ``expected_version`` was read. Setting the level it already has
+        changes nothing.
+        """
+        problem = validate_reorder_level(level)
+        if problem:
+            raise ReorderLevelRejected(problem)
+        with self._store.unit_of_work() as session:
+            item = self._store.load(session, InventoryItem, item_id, lock=True)
+            if item.version != expected_version:
+                raise StaleVersionError(
+                    f"InventoryItem {item_id} is at version {item.version}, not {expected_version}"
                 )
-            return levels
+            if item.reorder_threshold != _stock(level):
+                item.reorder_threshold = _stock(level)
+                self._store.commit(
+                    session, item, actor_id=actor_id, action=REORDER_ACTION,
+                    expected_version=expected_version, revise=True,
+                )
+            return _level(item, self.committed_needs(session))
 
     @staticmethod
     def _recipe_for(
@@ -600,7 +651,7 @@ def validate_receipt(receipt: ReceiptInput) -> tuple[ReceiptIssue, ...]:
         issues.append(ReceiptIssue("item_id", "must be a UUID"))
     quantity = receipt.quantity
     if not isinstance(quantity, Decimal):
-        issues.append(ReceiptIssue("quantity", "must be a Decimal, not a float or other type"))
+        issues.append(ReceiptIssue("quantity", "must be a number, such as 2500 or 2.5"))
     elif not quantity.is_finite():
         issues.append(ReceiptIssue("quantity", "must be a finite number"))
     elif quantity <= 0:
@@ -626,6 +677,35 @@ def validate_receipt(receipt: ReceiptInput) -> tuple[ReceiptIssue, ...]:
             ReceiptIssue("source_reference", f"must be at most {MAX_REFERENCE_LENGTH} characters")
         )
     return tuple(issues)
+
+
+def validate_reorder_level(level: Decimal) -> str | None:
+    """Why ``level`` cannot be a reorder level; None means it can."""
+    if not isinstance(level, Decimal):
+        return "must be a number, such as 200 or 0.5"
+    if not level.is_finite():
+        return "must be a finite number"
+    if level < 0:
+        return "must be zero or more"
+    if level > MAX_QUANTITY:
+        return f"must be at most {MAX_QUANTITY}"
+    if level != level.quantize(_STOCK_PLACES):
+        return "must have at most 3 decimal places"
+    return None
+
+
+def _level(item: InventoryItem, committed: Mapping[uuid.UUID, Decimal]) -> StockLevel:
+    need = committed.get(item.item_id, Decimal(0))
+    return StockLevel(
+        item_id=item.item_id,
+        ingredient=item.ingredient_name,
+        unit=item.unit,
+        on_hand=_stock(item.quantity_on_hand),
+        committed=_stock(need),
+        available=_stock(item.quantity_on_hand - need),
+        reorder_level=_stock(item.reorder_threshold),
+        version=item.version,
+    )
 
 
 def _normalised_receipt(receipt: ReceiptInput) -> ReceiptInput:

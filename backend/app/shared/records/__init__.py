@@ -2,29 +2,33 @@
 
 Importing this package registers every table on ``app.db.Base.metadata``.
 Stage 2 extension tables (intake requests, change requests, deductions,
-transitions, AI requests, notifications, mock payments and publications) are
-added by the stories that need them; BAKE-32 adds ingredient receipts.
+transitions, AI requests, notifications and publications) are added by the
+stories that need them; BAKE-32 adds ingredient receipts, BAKE-33 order
+deductions, BAKE-37 AI requests [R5] and BAKE-39 mock payments.
 """
 
 from app.shared.records._common import (
     ApprovalDecision,
     CustomerDecision,
     OrderStatus,
+    PaymentStatus,
     Role,
     TaskStatus,
     TransactionKind,
     Versioning,
 )
 from app.shared.records.accounts import BakerySettings, Customer, UserAccount
+from app.shared.records.ai_requests import AIRequest, AIRequestStatus
 from app.shared.records.approvals import ApprovalRequest
 from app.shared.records.audit import AuditEntry, ConstraintGuard
 from app.shared.records.catalogue import InventoryItem, Product, Recipe, RecipeIngredient
-from app.shared.records.finance import Quote, Transaction
+from app.shared.records.deductions import OrderDeduction, OrderDeductionLine
+from app.shared.records.finance import MockPayment, Quote, Transaction
 from app.shared.records.marketing import (
     Campaign,
     CampaignProduct,
-    MockPublication,
     MarketingContent,
+    MockPublication,
 )
 from app.shared.records.orders import Order, OrderItem
 from app.shared.records.production import (
@@ -36,6 +40,8 @@ from app.shared.records.production import (
 from app.shared.records.receipts import InventoryReceipt
 
 __all__ = [
+    "AIRequest",
+    "AIRequestStatus",
     "ApprovalDecision",
     "ApprovalRequest",
     "AuditEntry",
@@ -50,12 +56,16 @@ __all__ = [
     "InventoryReceipt",
     "MarketingContent",
     "Order",
+    "OrderDeduction",
+    "OrderDeductionLine",
     "OrderItem",
     "OrderStatus",
     "ProductionSchedule",
     "ProductionScheduleVersion",
     "ProductionTask",
     "Product",
+    "MockPayment",
+    "PaymentStatus",
     "Quote",
     "Recipe",
     "RecipeIngredient",
