@@ -1,11 +1,24 @@
-import { useEffect, useState } from "react";
-import { api, ApiError, type Profitability, type ProfitLine, type Session } from "../api/client";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  api,
+  ApiError,
+  type FieldIssue,
+  type Profitability,
+  type ProfitLine,
+  type Session,
+  type TransactionInput,
+} from "../api/client";
 import { Notice } from "../components/Notice";
 
 // UC-06 steps 4-7 (BAKE-34): profitability from the recorded ledger, and an AI
 // explanation only when the owner asks. Every figure comes from the server as
 // a decimal string and is shown exactly as given; the explanation never
 // changes them, and if it is unavailable the figures stay on screen (5a).
+//
+// UC-06 steps 1-4 (BAKE-43): the owner records an income or expense through
+// BAKE-24's ledger API. The server's rules decide; the page shows the fields
+// to fix (2a) or that the reference is already recorded (2b), and reloads the
+// figures after a save.
 
 const money = (value: string) => {
   const negative = value.startsWith("-");
@@ -13,6 +26,138 @@ const money = (value: string) => {
 };
 const percent = (margin: string | null) =>
   margin === null ? "—" : `${(Math.round(Number(margin) * 1000) / 10).toFixed(1)}%`;
+
+// What the server accepts exactly: a positive amount with at most two decimals.
+const AMOUNT = /^\d{1,9}(\.\d{1,2})?$/;
+const FIELD_LABELS: Record<string, string> = {
+  kind: "Type",
+  amount: "Amount",
+  source_type: "Source",
+  source_reference: "Reference",
+  occurred_at: "Date",
+  order_id: "Order",
+};
+const today = () => new Intl.DateTimeFormat("en-CA").format(new Date());
+const shortOrder = (id: string) => `Order ${id.slice(0, 8)}`;
+type Form = Omit<TransactionInput, "occurredAt" | "orderId"> & { date: string; orderId: string };
+const EMPTY: Form = { kind: "Expense", amount: "", sourceType: "Invoice", sourceReference: "", date: today(), orderId: "" };
+
+function TransactionForm({ session, orders, onSaved }: {
+  session: Session;
+  orders: string[];
+  onSaved: (message: string) => Promise<void>;
+}) {
+  const [form, setForm] = useState<Form>(EMPTY);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [issues, setIssues] = useState<FieldIssue[]>([]);
+  const set = (change: Partial<Form>) => setForm((current) => ({ ...current, ...change }));
+  const validAmount = AMOUNT.test(form.amount) && Number(form.amount) > 0;
+  const ready = validAmount && form.sourceReference.trim() !== "" && form.date !== "";
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (saving || !ready) return;
+    setSaving(true);
+    setError("");
+    setIssues([]);
+    // Two decimal places, as a string; the day starts at local midnight, so today is never "in the future".
+    const [whole, cents = ""] = form.amount.split(".");
+    const entry: TransactionInput = {
+      kind: form.kind,
+      amount: `${whole}.${cents.padEnd(2, "0")}`,
+      sourceType: form.sourceType,
+      sourceReference: form.sourceReference.trim(),
+      occurredAt: new Date(`${form.date}T00:00:00`).toISOString(),
+      orderId: form.orderId || null,
+    };
+    try {
+      const saved = await api.recordTransaction(entry, session.csrfToken);
+      setForm({ ...EMPTY, kind: form.kind, sourceType: form.sourceType, date: form.date });
+      await onSaved(`${saved.kind} ${saved.sourceType} ${saved.sourceReference} of $${saved.amount} recorded.`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "The transaction could not be recorded. Please try again.");
+      setIssues(err instanceof ApiError ? err.issues : []);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="card orders" aria-labelledby="record-title">
+      <h2 id="record-title">Record a transaction</h2>
+      <p className="field-help">
+        Enter an ingredient invoice, a receipt or a voucher. Customer payments are recorded automatically.
+      </p>
+      {error && (
+        <Notice error>
+          {error}
+          {issues.length > 0 && (
+            <ul>
+              {issues.map((issue) => (
+                <li key={`${issue.field}-${issue.message}`}>
+                  {FIELD_LABELS[issue.field] ?? issue.field}: {issue.message}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Notice>
+      )}
+      <form onSubmit={submit}>
+        <div className="actions">
+          <label>
+            Type
+            <select value={form.kind} disabled={saving}
+              onChange={(e) => set({ kind: e.target.value as Form["kind"] })}>
+              <option value="Expense">Expense</option>
+              <option value="Income">Income</option>
+            </select>
+          </label>
+          <label>
+            Amount (AUD)
+            <input value={form.amount} inputMode="decimal" autoComplete="off" disabled={saving}
+              aria-invalid={form.amount !== "" && !validAmount}
+              onChange={(e) => set({ amount: e.target.value.trim() })} />
+          </label>
+          <label>
+            Source
+            <select value={form.sourceType} disabled={saving}
+              onChange={(e) => set({ sourceType: e.target.value as Form["sourceType"] })}>
+              <option value="Invoice">Invoice</option>
+              <option value="Receipt">Receipt</option>
+              <option value="Voucher">Voucher</option>
+            </select>
+          </label>
+          <label>
+            Reference
+            <input value={form.sourceReference} maxLength={200} placeholder="INV-1042" disabled={saving}
+              onChange={(e) => set({ sourceReference: e.target.value })} />
+          </label>
+          <label>
+            Date
+            <input type="date" value={form.date} max={today()} disabled={saving}
+              onChange={(e) => set({ date: e.target.value })} />
+          </label>
+          <label>
+            Order (optional)
+            <select value={form.orderId} disabled={saving} onChange={(e) => set({ orderId: e.target.value })}>
+              <option value="">None (general cost)</option>
+              {orders.map((id) => (
+                <option key={id} value={id}>{shortOrder(id)}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {form.amount !== "" && !validAmount && (
+          <p className="field-help">Enter an amount above zero such as 12.50, with at most two decimals.</p>
+        )}
+        <button className="primary" type="submit" disabled={saving || !ready}>
+          {saving ? "Recording…" : "Record transaction"}
+        </button>
+      </form>
+    </section>
+  );
+}
 
 function Row({ label, line }: { label: string; line: ProfitLine }) {
   return (
@@ -56,6 +201,7 @@ export function FinancePage({ session }: { session: Session }) {
   const [explanation, setExplanation] = useState<{ text: string | null; notice: string | null } | null>(null);
   const [explaining, setExplaining] = useState(false);
   const [explainError, setExplainError] = useState("");
+  const [saved, setSaved] = useState("");
 
   async function explain() {
     if (explaining) return;
@@ -73,11 +219,27 @@ export function FinancePage({ session }: { session: Session }) {
     }
   }
 
+  const load = useCallback(
+    () =>
+      api.profitability().then(
+        (figures) => {
+          setError("");
+          setData(figures);
+        },
+        (err: unknown) => setError(err instanceof ApiError ? err.message : "Profitability could not be loaded."),
+      ),
+    [],
+  );
   useEffect(() => {
-    api.profitability().then(setData, (err: unknown) =>
-      setError(err instanceof ApiError ? err.message : "Profitability could not be loaded."),
-    );
-  }, []);
+    load();
+  }, [load]);
+
+  async function recorded(message: string) {
+    setSaved(message);
+    // Step 4: the figures come from the ledger again; an old explanation no longer describes them.
+    setExplanation(null);
+    await load();
+  }
 
   return (
     <>
@@ -88,6 +250,8 @@ export function FinancePage({ session }: { session: Session }) {
         <p>Profit from your recorded income and expenses.</p>
       </section>
       {error && <Notice error>{error}</Notice>}
+      {saved && <Notice>{saved}</Notice>}
+      <TransactionForm session={session} orders={data?.byOrder.map((o) => o.orderId) ?? []} onSaved={recorded} />
       {!data && !error && <Notice>Loading profitability…</Notice>}
       {data && (
         <section className="card orders" aria-labelledby="profit-title">
@@ -136,7 +300,7 @@ export function FinancePage({ session }: { session: Session }) {
                   caption="By order"
                   rows={data.byOrder.map((o) => ({
                     key: o.orderId,
-                    label: `Order ${o.orderId.slice(0, 8)}`,
+                    label: shortOrder(o.orderId),
                     line: o,
                   }))}
                 />
