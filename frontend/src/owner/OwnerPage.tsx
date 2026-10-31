@@ -1,5 +1,8 @@
 import { OrderChangeReviews } from "./OrderChangeReviews";
+import { OwnerReviews } from "../components/OwnerReviews";
 import type { Session } from "../api/client";
+import { AIActivityPage } from "./AIActivityPage";
+import { ApprovalsPage } from "./ApprovalsPage";
 import { FinancePage } from "./FinancePage";
 import { InventoryPage } from "./InventoryPage";
 import { SchedulesPage } from "./SchedulesPage";
@@ -8,8 +11,7 @@ export const ownerPages = {
   approvals: {
     title: "Pending approvals",
     description: "Review the decisions that need your attention.",
-    detail:
-      "Quotations, production plans and marketing content will appear here for review of their current version.",
+    detail: "",
   },
   orders: {
     title: "Orders",
@@ -32,13 +34,20 @@ export const ownerPages = {
     description: "Make room for a well-planned baking day.",
     detail: "",
   },
+  ai: {
+    title: "AI activity",
+    description: "Every assistant request, with its retries and result.",
+    detail: "",
+  },
 };
 export type OwnerPageName = keyof typeof ownerPages;
 
-export function OwnerPage({ page, session }: { page: OwnerPageName; session: Session }) {
-  if (page === "finance") return <FinancePage />;
+export function OwnerPage({ page, session, onExpired }: { page: OwnerPageName; session: Session; onExpired?: () => void }) {
+  if (page === "approvals") return <><ApprovalsPage session={session} /><OwnerReviews session={session} /></>;
+  if (page === "finance") return <FinancePage session={session} />;
   if (page === "inventory") return <InventoryPage session={session} />;
   if (page === "schedules") return <SchedulesPage session={session} />;
+  if (page === "ai") return <AIActivityPage />;
   const content = ownerPages[page];
   return (
     <>
@@ -48,7 +57,7 @@ export function OwnerPage({ page, session }: { page: OwnerPageName; session: Ses
         <h1>{content.title}</h1>
         <p>{content.description}</p>
       </section>
-      {page === "orders" && <OrderChangeReviews session={session} />}
+      {page === "orders" && <OrderChangeReviews session={session} onExpired={onExpired} />}
       {page !== "orders" && <section className="card placeholder">
         <span className="stamp" aria-hidden="true">
           ◇

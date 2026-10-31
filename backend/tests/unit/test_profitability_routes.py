@@ -44,3 +44,11 @@ def test_period_end_must_follow_its_start():
     response = client_as("Owner").get(URL, params={
         "start": "2026-10-08T00:00:00+11:00", "end": "2026-10-01T00:00:00+10:00"})
     assert response.status_code == 422
+
+
+def test_only_the_owner_can_ask_for_an_explanation():
+    url = f"{URL}/explanation"
+    assert client_as(None).post(url).status_code == 401
+    assert client_as("Customer").post(url).status_code == 403
+    response = client_as("Owner").post(url, params={"start": "2026-10-01T00:00:00"})
+    assert response.status_code == 422

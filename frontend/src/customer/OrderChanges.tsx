@@ -58,7 +58,7 @@ export function OrderChanges({ orders, session, onExpired, onChanged }: {
       <label htmlFor="change-order">Order</label>
       <select id="change-order" required value={orderId} disabled={busy} onChange={e => { setOrderId(e.target.value); edited(); }}>
         <option value="">Choose your order</option>
-        {orders.map(o => <option key={o.id} value={o.id}>{o.id} — {o.summary} ({o.status})</option>)}
+        {orders.map(o => <option key={o.id} value={o.id}>{o.summary} · #{o.id.slice(0, 8)} ({o.status})</option>)}
       </select>
       <label htmlFor="change-kind">Request type</label>
       <select id="change-kind" value={kind} disabled={busy} onChange={e => { setKind(e.target.value as ChangeKind); edited(); }}>
@@ -85,7 +85,7 @@ export function OrderChanges({ orders, session, onExpired, onChanged }: {
     {listError && <Notice error>{listError}</Notice>}
     {!listError && rows.length === 0 && <p>No confirmed change requests yet.</p>}
     {rows.map(row => <article className="change-request" key={row.id}>
-      <h4>{row.kind} · {row.status}</h4><p>Order {row.orderId}</p><p>{row.message}</p>
+      <h4>{row.kind} · {row.status}</h4><p>{orders.find(o => o.id === row.orderId)?.summary ?? "Order"} · #{row.orderId.slice(0, 8)}</p><p>{row.message}</p>
       <ProposedTerms terms={row.proposed} />
       {row.ownerNote && <p>Owner: {row.ownerNote}</p>}
       {row.quoteTotal !== null && <p>Revised quotation: <strong>AUD {row.quoteTotal}</strong></p>}

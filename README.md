@@ -187,6 +187,16 @@ as a fallback. This section will be updated once the team confirms it.
 The gateway makes exactly one provider call per request and does not retry. The
 retry budget belongs to `WorkflowService` (BAKE-8).
 
+Every AI operation that runs through `WorkflowService.run_ai_task` is saved in
+the `ai_requests` table (architecture [R5], added with BAKE-37): the task and
+its subject, who asked, Mock or the provider's host and model, the prompt
+version, each attempt's time and result, the type of any error, and the
+outcome. No prompt, reply, customer text, key or error text is stored. The
+owner sees the latest requests on the **AI activity** page
+(`GET /api/owner/ai-requests`). New AI features need no extra code to be
+recorded, as long as they call the model through `run_ai_task` rather than
+`client.complete()` directly.
+
 
 ### BAKE-11 summary signing and optional local demo
 
@@ -206,3 +216,28 @@ Deployment requires HTTPS; local development may use loopback HTTP.
 ### Customer order changes and cancellation (BAKE-30)
 
 Use **Adjust an order** to preview a quantity/time change, cancellation or refund review. Confirm before anything is saved. Confirmed sales keep their original terms until the owner approves a revised quotation and the customer accepts it; the owner's **Orders** page contains these requests. Started work and refunds require owner review, and cancellation never refunds money or reverses recorded consumption. See [supported requests, design refinements and demo steps](docs/bake30-order-changes.md).
+### Customer order notifications (BAKE-38)
+
+Customer **Order updates** refresh automatically after recorded order transitions. Notifications are private, deduplicated and template-based, and delivery failure cannot undo an order operation. No API key or email configuration is required. This is a new Stage 2 optional feature, absent from the Stage 1 feature diagram; see [design differences, failure recovery and demo steps](docs/bake38-notifications.md).
+### BAKE-37 low-stock alerts (optional feature, design deviation)
+
+Low-stock alerts are a **new optional feature** ([O1] in the architecture), not
+one of the optional features in the Stage One feature diagram. They extend
+AR-02 (Inventory and Production) and keep its purchasing boundary: the system
+suggests, the owner orders.
+
+- Each ingredient has an owner-set **reorder level** in its stock unit, changed
+  on the **Inventory** page for the version the owner saw.
+- An ingredient is **low** when its available stock (on hand less what released
+  plans commit, IP-02) is **below** its reorder level; at the level is not low.
+- The **suggested reorder** brings available stock back to twice the level.
+- Alerts are worked out on every stock read, with no model call and no timer,
+  and never change stock or place an order.
+- When the owner asks, the Inventory and Production agent explains the alerts.
+  Its text must give each ingredient only its own listed figures; if no usable
+  explanation arrives within the shared retry budget, the alerts are shown with
+  a notice.
+
+Known gap: the architecture routes the explanation request through
+`WorkflowService.handle` and `dispatch`, which do not exist yet. Like BAKE-31,
+BAKE-37 calls `WorkflowService.run_ai_task` directly.

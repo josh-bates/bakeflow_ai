@@ -43,3 +43,11 @@ Automated coverage exercises preview/withdrawal, same-version stale states, conc
 - Alembic upgrade and metadata comparison passed.
 - Browser rehearsal: a customer requested a change from 24 to 36 vanilla cupcakes on a confirmed order. The original quantity remained 24 through request submission, owner quotation preparation, and owner approval. The customer then accepted the revised AUD 141.34 quotation; the order updated to 36 and the request became Applied.
 - Review and merge are still required before this story meets the common Definition of Done.
+
+## Integration review
+
+Migration order: BAKE-37 → BAKE-17 → BAKE-38 → BAKE-30. Merge PRs #45, #46 and #47 in that order.
+
+Plan release remains atomic for the exact approved plan version. A pending amendment blocks release of a plan containing that order, but does not block unrelated plans. Silently dropping a task would release a different plan from the one the owner approved. Withdraw/resolve the request, or create and approve a replacement plan before release. Existing ingredient consumption is never reversed.
+
+BAKE-17 retains its exception proposal/acknowledgement queue; BAKE-30 handles commercial amendments and cancellation. Neither refund review route executes a refund.

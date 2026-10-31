@@ -27,6 +27,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -45,6 +46,7 @@ from app.sales.orders import OrderService
 from app.shared.approvals import AlreadyDecided, ApprovalKind, ApprovalService
 from app.shared.records import (
     ApprovalDecision,
+    ApprovalRequest,
     BakerySettings,
     Customer,
     CustomerDecision,
@@ -130,6 +132,21 @@ class Acceptance:
     quote: RecordRef
     order: RecordRef
     replayed: bool = False
+
+
+@dataclass(frozen=True)
+class QueueItem:
+    """One open order on the owner's approvals page (UC-05 steps 1-8)."""
+
+    order_id: uuid.UUID
+    summary: str
+    required_at: datetime
+    order_status: str
+    # The order has a stock check for its current version, so it can be priced.
+    ready: bool
+    quote: QuoteView | None
+    # The owner's decision on the latest version: Pending, Approved or Withheld.
+    approval: str | None
 
 
 @dataclass(frozen=True)
@@ -236,11 +253,43 @@ class QuoteService:
             self._decide(session, quote, ApprovalDecision.REJECTED, owner_id)
             return QuoteView.of(current)
 
+    def order_ref(self, order_id: uuid.UUID) -> RecordRef:
+        """The order as it stands now, e.g. as the subject of its quote's AI request."""
+        with self.store.unit_of_work() as session:
+            return self.store.ref(self._order(session, order_id))
+
     def latest(self, order_id: uuid.UUID) -> QuoteView | None:
         """The owner's view: the latest version of an order's quote, approved or not."""
         with self.store.unit_of_work() as session:
             quote = self._latest_for_order(session, order_id)
             return QuoteView.of(quote) if quote else None
+
+    def queue(self) -> list[QueueItem]:
+        """Orders still being quoted (Draft or Quoted), soonest collection first."""
+        with self.store.unit_of_work() as session:
+            products = {p.product_id: p.name for p in session.scalars(select(Product))}
+            orders = session.scalars(
+                select(Order)
+                .where(Order.status.in_(tuple(_PRICEABLE)))
+                .order_by(Order.required_at, Order.order_id)
+            ).all()
+            items = []
+            for order in orders:
+                quote = self._latest_for_order(session, order.order_id)
+                items.append(
+                    QueueItem(
+                        order_id=order.order_id,
+                        summary=", ".join(
+                            f"{item.quantity} {products[item.product_id]}" for item in order.items
+                        ),
+                        required_at=order.required_at,
+                        order_status=order.status,
+                        ready=_current_shopping_list(session, order) is not None,
+                        quote=QuoteView.of(quote) if quote else None,
+                        approval=_approval_state(session, quote) if quote else None,
+                    )
+                )
+            return items
 
     # 3-5. Customer ---------------------------------------------------------------
 
@@ -520,6 +569,20 @@ def _commit_decision(store: ValidatedRecordStore, session: Session, quote: Quote
         raise QuoteError(
             "STALE_VERSION", "this quote has been revised; a revised quotation will follow"
         ) from None
+
+
+def _approval_state(session: Session, quote: Quote) -> str:
+    """The owner's decision on this exact version, as the approvals page shows it."""
+    decision = session.scalars(
+        select(ApprovalRequest.decision).where(
+            ApprovalRequest.kind == ApprovalKind.QUOTATION,
+            ApprovalRequest.subject_id == quote.quote_id,
+            ApprovalRequest.subject_version == quote.version,
+        )
+    ).first()
+    if decision == ApprovalDecision.APPROVED:
+        return "Approved"
+    return "Withheld" if decision == ApprovalDecision.REJECTED else "Pending"
 
 
 def _customer_actor(session: Session, order: Order) -> uuid.UUID:

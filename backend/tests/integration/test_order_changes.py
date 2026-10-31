@@ -329,3 +329,15 @@ def test_paid_cancellation_is_review_only(store, seeded):
     assert p["route"] == "OwnerReview"
     result = service.confirm(customer(seeded), p["confirmationToken"])
     assert result["status"] == "Pending" and state(store, oid)[0] == "Confirmed"
+
+
+def test_change_token_cannot_confirm_a_new_order(store, seeded):
+    from app.sales.intake import OrderIntake
+    order_id = draft(store, seeded)
+    _, result = preview(store, seeded, order_id)
+    intake = OrderIntake(store, mock_change("change quantity to 36"), SECRET)
+    with pytest.raises(IntakeError) as error:
+        intake.confirm(customer(seeded), result["confirmationToken"])
+    assert error.value.code == "SUMMARY_EXPIRED"
+    assert count(store, OrderChangeRequest) == 0
+    assert state(store, order_id)[2] == 24
