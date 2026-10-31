@@ -40,6 +40,7 @@ CORE_TABLES = {
 
 # Stage 2 extension tables added by later stories (architecture §5.3).
 EXTENSION_TABLES = {
+    "order_change_requests",
     "workflow_transitions", "notifications",
     "owner_referrals",
     "ai_requests",

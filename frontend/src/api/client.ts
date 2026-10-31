@@ -209,7 +209,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path: string, init: RequestInit = {}): Promise<unknown> {
+export async function request(path: string, init: RequestInit = {}): Promise<unknown> {
   let response: Response;
   try {
     response = await fetch(`/api${path}`, {

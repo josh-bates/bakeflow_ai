@@ -10,6 +10,7 @@ import {
   type CustomerQuote,
   type Payment,
 } from "../api/client";
+import { OrderChanges } from "./OrderChanges";
 import { Notifications } from "./Notifications";
 import "./notifications.css";
 import { OwnerReviews } from "../components/OwnerReviews";
@@ -464,7 +465,8 @@ export function CustomerPage({
           </div>
         )}
       </section>
-      <OwnerReviews session={session} refreshKey={result} onExpired={onExpired} />
+      <OrderChanges orders={orders} session={session} onExpired={onExpired} onChanged={() => setReload(n => n + 1)} />
+      <OwnerReviews session={session} refreshKey={result} onExpired={onExpired} showRequestForm={false} />
     </>
   );
 }

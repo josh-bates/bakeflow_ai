@@ -22,6 +22,7 @@ beforeEach(() => {
       url === "/api/session" ? response(session()) : response({ orders: [] }),
     );
   vi.stubGlobal("fetch", (url: string, options?: RequestInit) => {
+    if (["/api/order-changes", "/api/owner/order-changes"].includes(url)) return Promise.resolve(response({ requests: [] }));
     if (url === "/api/notifications") return Promise.resolve(response({ notifications: [] }));
     if (url === "/api/exception-requests") return Promise.resolve(response({ requests: [] }));
     if (url === "/api/owner/exception-catalogue") return Promise.resolve(response({ products: [] }));
@@ -213,7 +214,7 @@ it("blocks a customer from rendering an owner route", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-it("lets an owner navigate orders and the exception review dashboard", async () => {
+it("lets an owner navigate live order reviews and remaining placeholder pages", async () => {
   const user = userEvent.setup();
   fetchMock.mockImplementation(async (url: string) =>
     url === "/api/session" ? response(session("Owner")) : response({ orders: [] }),
@@ -228,8 +229,8 @@ it("lets an owner navigate orders and the exception review dashboard", async () 
     expect(
       await screen.findByRole("heading", { name: title }),
     ).toBeInTheDocument();
-    if (title === "Orders") expect(screen.getByText(/This page is a placeholder/)).toBeInTheDocument();
-    else expect(screen.getByRole("heading", { name: "Order exceptions awaiting review" })).toBeInTheDocument();
+    if (title === "Orders") expect(screen.getByRole("heading", { name: "Order change reviews" })).toBeInTheDocument();
+    else expect(screen.getByText(/This page is a placeholder/)).toBeInTheDocument();
   }
   // The session, then the quote queue on Pending approvals (BAKE-23).
   expect(fetchMock).toHaveBeenCalledTimes(2);

@@ -94,7 +94,7 @@ function ReviewCard({ row, owner, catalogue, session, changed, expired }: {
   </article>;
 }
 
-export function OwnerReviews({ session, refreshKey, onExpired }: { session: Session; refreshKey?: unknown; onExpired?: () => void }) {
+export function OwnerReviews({ session, refreshKey, onExpired, showRequestForm = true }: { session: Session; refreshKey?: unknown; onExpired?: () => void; showRequestForm?: boolean }) {
   const owner = session.user.role === "Owner";
   const [rows, setRows] = useState<Referral[]>([]);
   const [catalogue, setCatalogue] = useState<CatalogueItem[]>([]);
@@ -121,7 +121,7 @@ export function OwnerReviews({ session, refreshKey, onExpired }: { session: Sess
       {!rows.length && <p>No owner reviews yet.</p>}
       {rows.map(row => <ReviewCard key={`${row.id}:${row.version}:${row.status}`} row={row} session={session} owner={owner} catalogue={catalogue} changed={() => setReload(n => n + 1)} expired={onExpired} />)}
     </>}
-    {!owner && <details><summary>Request a refund or a change to work in production</summary><form onSubmit={async e => {
+    {!owner && showRequestForm && <details><summary>Request a refund or a change to work in production</summary><form onSubmit={async e => {
       e.preventDefault(); if (busy) return; setBusy(true); setError("");
       try { await referrals.create(kind, orderId.trim(), message, session.csrfToken); setMessage(""); setReload(n => n + 1); }
       catch (e) { setError((e as Error).message); }
