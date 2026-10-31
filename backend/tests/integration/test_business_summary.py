@@ -362,3 +362,47 @@ def test_the_planning_dates_must_not_run_backwards(marketing):
             planning_start=PLANNING_END,
             planning_end=PLANNING_START,
         )
+
+
+def test_a_completed_orders_tasks_still_take_capacity(store, marketing, seeded):
+    """As the scheduler counts it: that oven time was used."""
+    placed = order(store, seeded)
+    released_plan(store, seeded, order_ref=placed, needs_grams=600, minutes=60)
+    with store.unit_of_work() as session:
+        record = store.load(session, Order, placed.record_id)
+        record.status = OrderStatus.COMPLETED
+        store.commit(
+            session, record, actor_id=seeded.owner_id, action="test.complete",
+            expected_version=record.version,
+        )
+
+    assert summarise(marketing).capacity.committed_minutes == 60
+
+
+def test_a_deduction_during_the_summary_does_not_overstate_stock(store, marketing, seeded):
+    """On-hand and committed come from one state, before or after the deduction."""
+    placed = order(store, seeded)
+    released_plan(store, seeded, order_ref=placed, needs_grams=600, minutes=60)
+    committed_needs = marketing.inventory.committed_needs
+
+    def deduct_then_read(session):
+        with store.unit_of_work() as other:
+            flour = store.load(other, InventoryItem, seeded.items["Flour"])
+            flour.quantity_on_hand -= 600
+            store.commit(
+                other, flour, actor_id=seeded.owner_id, action="test.deduct",
+                expected_version=flour.version,
+            )
+            record = store.load(other, Order, placed.record_id)
+            record.status = OrderStatus.COMPLETED
+            store.commit(
+                other, record, actor_id=seeded.owner_id, action="test.complete",
+                expected_version=record.version,
+            )
+        return committed_needs(session)
+
+    marketing.inventory.committed_needs = deduct_then_read
+    summary = summarise(marketing)
+
+    flour = next(line for line in summary.stock if line.item_id == seeded.items["Flour"])
+    assert flour.available == flour.on_hand - 600
