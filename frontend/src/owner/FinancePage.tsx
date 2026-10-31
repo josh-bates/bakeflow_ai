@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   ApiError,
@@ -8,6 +8,7 @@ import {
   type Session,
   type TransactionInput,
 } from "../api/client";
+import { AiMark } from "../components/AiMark";
 import { Notice } from "../components/Notice";
 
 // UC-06 steps 4-7 (BAKE-34): profitability from the recorded ledger, and an AI
@@ -40,14 +41,16 @@ const FIELD_LABELS: Record<string, string> = {
 const today = () => new Intl.DateTimeFormat("en-CA").format(new Date());
 const shortOrder = (id: string) => `Order ${id.slice(0, 8)}`;
 type Form = Omit<TransactionInput, "occurredAt" | "orderId"> & { date: string; orderId: string };
-const EMPTY: Form = { kind: "Expense", amount: "", sourceType: "Invoice", sourceReference: "", date: today(), orderId: "" };
+// Built each time the form opens, because the app can stay loaded past midnight.
+const emptyForm = (): Form => ({ kind: "Expense", amount: "", sourceType: "Invoice", sourceReference: "", date: today(), orderId: "" });
 
-function TransactionForm({ session, orders, onSaved }: {
+function TransactionForm({ session, orders, onStart, onSaved }: {
   session: Session;
   orders: string[];
+  onStart: () => void;
   onSaved: (message: string) => Promise<void>;
 }) {
-  const [form, setForm] = useState<Form>(EMPTY);
+  const [form, setForm] = useState<Form>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [issues, setIssues] = useState<FieldIssue[]>([]);
@@ -61,6 +64,7 @@ function TransactionForm({ session, orders, onSaved }: {
     setSaving(true);
     setError("");
     setIssues([]);
+    onStart();
     // Two decimal places, as a string; the day starts at local midnight, so today is never "in the future".
     const [whole, cents = ""] = form.amount.split(".");
     const entry: TransactionInput = {
@@ -73,7 +77,7 @@ function TransactionForm({ session, orders, onSaved }: {
     };
     try {
       const saved = await api.recordTransaction(entry, session.csrfToken);
-      setForm({ ...EMPTY, kind: form.kind, sourceType: form.sourceType, date: form.date });
+      setForm({ ...emptyForm(), kind: form.kind, sourceType: form.sourceType, date: form.date });
       await onSaved(`${saved.kind} ${saved.sourceType} ${saved.sourceReference} of $${saved.amount} recorded.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "The transaction could not be recorded. Please try again.");
@@ -103,7 +107,7 @@ function TransactionForm({ session, orders, onSaved }: {
           )}
         </Notice>
       )}
-      <form onSubmit={submit}>
+      <form className="transaction-form" onSubmit={submit}>
         <div className="actions">
           <label>
             Type
@@ -174,7 +178,7 @@ function Row({ label, line }: { label: string; line: ProfitLine }) {
 function Table({ caption, rows }: { caption: string; rows: { key: string; label: string; line: ProfitLine }[] }) {
   return (
     <div className="table-scroll">
-      <table>
+      <table className="money-table">
         <caption className="sr-only">{caption}</caption>
         <thead>
           <tr>
@@ -202,13 +206,17 @@ export function FinancePage({ session }: { session: Session }) {
   const [explaining, setExplaining] = useState(false);
   const [explainError, setExplainError] = useState("");
   const [saved, setSaved] = useState("");
+  const saves = useRef(0);
 
   async function explain() {
     if (explaining) return;
     setExplaining(true);
     setExplainError("");
+    const savesWhenAsked = saves.current;
     try {
       const result = await api.explainProfitability(session.csrfToken);
+      // A save while this was running means it describes figures that are now out of date.
+      if (saves.current !== savesWhenAsked) return;
       // The explanation describes exactly these figures, so show them together.
       setData(result);
       setExplanation({ text: result.explanation, notice: result.notice });
@@ -235,6 +243,7 @@ export function FinancePage({ session }: { session: Session }) {
   }, [load]);
 
   async function recorded(message: string) {
+    saves.current += 1;
     setSaved(message);
     // Step 4: the figures come from the ledger again; an old explanation no longer describes them.
     setExplanation(null);
@@ -251,7 +260,12 @@ export function FinancePage({ session }: { session: Session }) {
       </section>
       {error && <Notice error>{error}</Notice>}
       {saved && <Notice>{saved}</Notice>}
-      <TransactionForm session={session} orders={data?.byOrder.map((o) => o.orderId) ?? []} onSaved={recorded} />
+      <TransactionForm
+        session={session}
+        orders={data?.byOrder.map((o) => o.orderId) ?? []}
+        onStart={() => setSaved("")}
+        onSaved={recorded}
+      />
       {!data && !error && <Notice>Loading profitability…</Notice>}
       {data && (
         <section className="card orders" aria-labelledby="profit-title">
@@ -271,14 +285,18 @@ export function FinancePage({ session }: { session: Session }) {
                 ]}
               />
               <div className="actions">
-                <button className="secondary" disabled={explaining} onClick={explain}>
+                <button className="secondary ai" disabled={explaining} onClick={explain}>
+                  <AiMark />
                   {explaining ? "Explaining…" : "Explain these figures"}
                 </button>
               </div>
               {explainError && <Notice error>{explainError}</Notice>}
               {explanation?.text && (
                 <section className="order-summary" aria-labelledby="explanation-title">
-                  <h3 id="explanation-title">What these figures mean</h3>
+                  <h3 id="explanation-title">
+                    <AiMark />
+                    What these figures mean
+                  </h3>
                   <p>{explanation.text}</p>
                   <p className="field-help">Written by the assistant from the figures above, which it cannot change.</p>
                 </section>

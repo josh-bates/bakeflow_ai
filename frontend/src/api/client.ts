@@ -209,6 +209,9 @@ export class ApiError extends Error {
   }
 }
 
+/** Fired after anything is saved, so the sidebar counts can catch up. */
+export const DATA_CHANGED = "bakeflow:data-changed";
+
 export async function request(path: string, init: RequestInit = {}): Promise<unknown> {
   let response: Response;
   try {
@@ -244,6 +247,7 @@ export async function request(path: string, init: RequestInit = {}): Promise<unk
         "The bakery service could not complete this request. Please try again.",
     );
   }
+  if (init.method && init.method !== "GET") window.dispatchEvent(new Event(DATA_CHANGED));
   if (response.status === 204) return undefined;
   try {
     return await response.json();

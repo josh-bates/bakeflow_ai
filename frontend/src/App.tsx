@@ -2,8 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type Session } from "./api/client";
 import { CustomerPage } from "./customer/CustomerPage";
 import { OwnerPage, ownerPages, type OwnerPageName } from "./owner/OwnerPage";
+import { useOwnerCounts } from "./owner/useOwnerCounts";
 import { SignIn } from "./components/SignIn";
 import { Notice } from "./components/Notice";
+
+const TODAY = new Intl.DateTimeFormat("en-AU", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+  timeZone: "Australia/Sydney",
+});
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -52,12 +61,67 @@ export function App() {
         : "/customer"
       : path;
   const ownerPage = route.split("/")[2] as OwnerPageName;
+  const counts = useOwnerCounts(session?.user.role === "Owner", route);
   const permitted =
     session?.user.role === "Customer"
       ? route === "/customer"
       : route.startsWith("/owner/") && Object.hasOwn(ownerPages, ownerPage);
   const home =
     session?.user.role === "Owner" ? "/owner/approvals" : "/customer";
+
+  const brand = (
+    <a className="brand" href={`#${home}`}>
+      <span className="brand-mark" aria-hidden="true">
+        B
+      </span>
+      <span className="wordmark">
+        Bake<i>Flow</i>
+      </span>
+      <span className="brand-small">Bakery & more</span>
+    </a>
+  );
+  const identity = session && (
+    <div className="identity">
+      <span className="avatar" aria-hidden="true">
+        {session.user.displayName.charAt(0)}
+      </span>
+      <span>
+        {session.user.displayName}
+        <small>{session.user.role}</small>
+      </span>
+      <button className="secondary" onClick={async () => {
+        try { await api.logout(session.csrfToken); expire(); }
+        catch (e) { if (e instanceof ApiError && e.status === 401) expire(); else setError((e as Error).message); }
+      }}>Sign out</button>
+    </div>
+  );
+  const content = (
+    <main id="main-content" tabIndex={-1}>
+      {session && error && <Notice error>{error}</Notice>}
+      {loading ? (
+        <Notice>Opening your bakery workspace…</Notice>
+      ) : !session ? (
+        signedOut ? <SignIn onSuccess={() => { location.hash = "/"; setAttempt(value => value + 1); }} /> : (
+          <section className="card access"><h1>We couldn’t open your workspace</h1>
+            <Notice error>{error}</Notice>
+            <button className="secondary" onClick={() => setAttempt(value => value + 1)}>Try again</button>
+          </section>
+        )
+      ) : !permitted ? (
+        <section className="card access">
+          <h1>Page unavailable</h1>
+          <p>This page is not available for your account.</p>
+          <a className="primary" href={`#${home}`}>
+            Back to your workspace
+          </a>
+        </section>
+      ) : session.user.role === "Customer" ? (
+        <CustomerPage session={session} onExpired={expire} />
+      ) : (
+        <OwnerPage page={ownerPage} session={session} onExpired={expire} />
+      )}
+    </main>
+  );
 
   return (
     <>
@@ -71,29 +135,6 @@ export function App() {
       >
         Skip to content
       </a>
-      <header className="topbar">
-        <a className="brand" href={`#${home}`}>
-          <span className="brand-mark" aria-hidden="true">
-            B
-          </span>
-          BakeFlow<span className="brand-small">BAKERY & MORE</span>
-        </a>
-        {session && (
-          <div className="identity">
-            <span className="avatar" aria-hidden="true">
-              {session.user.displayName.charAt(0)}
-            </span>
-            <span>
-              {session.user.displayName}
-              <small>{session.user.role}</small>
-            </span>
-            <button className="secondary" onClick={async () => {
-              try { await api.logout(session.csrfToken); expire(); }
-              catch (e) { if (e instanceof ApiError && e.status === 401) expire(); else setError((e as Error).message); }
-            }}>Sign out</button>
-          </div>
-        )}
-      </header>
       {session?.mode === "mock" && (
         <div className="mock-banner" role="status">
           <strong>Prototype · Mock mode</strong>
@@ -102,58 +143,78 @@ export function App() {
           </span>
         </div>
       )}
-      {session && (
-        <nav aria-label="Main navigation">
-          {session.user.role === "Owner" ? (
-            Object.entries(ownerPages).map(([key, value]) => (
-              <a
-                key={key}
-                href={`#/owner/${key}`}
-                aria-current={route === `/owner/${key}` ? "page" : undefined}
-              >
-                {value.title}
-              </a>
-            ))
-          ) : (
-            <a
-              href="#/customer"
-              aria-current={route === "/customer" ? "page" : undefined}
-            >
-              Requests & orders
-            </a>
-          )}
-        </nav>
+      {session?.user.role === "Owner" ? (
+        <div className="owner-shell">
+          <aside className="side">
+            <div className="side-inner">
+              <div className="side-brand">{brand}</div>
+              <p className="toc-title" aria-hidden="true">Contents</p>
+              <nav className="toc" aria-label="Main navigation">
+                {Object.entries(ownerPages).map(([key, value], index) => {
+                  const waiting = counts[key as OwnerPageName] ?? 0;
+                  return (
+                    <a
+                      key={key}
+                      href={`#/owner/${key}`}
+                      aria-current={route === `/owner/${key}` ? "page" : undefined}
+                      aria-description={waiting > 0 ? `${waiting} waiting` : undefined}
+                    >
+                      <span className="n" aria-hidden="true">
+                        {String(index + 1).padStart(2, "0")}
+                      </span>
+                      {value.title}
+                      {key === "orders" && <span className="soon" aria-hidden="true">Soon</span>}
+                      {waiting > 0 && <span className="count" aria-hidden="true">{waiting}</span>}
+                    </a>
+                  );
+                })}
+              </nav>
+              <figure className="cameo">
+                <img src="/images/chocolate-cake.jpg" alt="" />
+                <p>A little less admin.<br />A little more baking.</p>
+              </figure>
+              <p className="side-meta">ELEC5620 · Prototype</p>
+            </div>
+          </aside>
+          <div>
+            <header className="topbar">
+              <div className="folio">
+                <span className="caps">Owner’s workspace</span>
+                <span className="date">{TODAY.format(new Date())}</span>
+              </div>
+              {identity}
+            </header>
+            {content}
+          </div>
+        </div>
+      ) : (
+        <>
+          <header className="masthead">
+            {session ? (
+              <nav aria-label="Main navigation">
+                <a
+                  href="#/customer"
+                  aria-current={route === "/customer" ? "page" : undefined}
+                >
+                  Requests & orders
+                </a>
+              </nav>
+            ) : (
+              <span />
+            )}
+            {brand}
+            {identity}
+          </header>
+          {content}
+          <footer>
+            <span className="wordmark">
+              Bake<i>Flow</i>
+            </span>
+            <span className="tag">A little less admin. A little more baking.</span>
+            <span className="side-meta">ELEC5620 · Prototype</span>
+          </footer>
+        </>
       )}
-      <main id="main-content" tabIndex={-1}>
-        {session && error && <Notice error>{error}</Notice>}
-        {loading ? (
-          <Notice>Opening your bakery workspace…</Notice>
-        ) : !session ? (
-          signedOut ? <SignIn onSuccess={() => { location.hash = "/"; setAttempt(value => value + 1); }} /> : (
-            <section className="card access"><h1>We couldn’t open your workspace</h1>
-              <Notice error>{error}</Notice>
-              <button className="secondary" onClick={() => setAttempt(value => value + 1)}>Try again</button>
-            </section>
-          )
-        ) : !permitted ? (
-          <section className="card access">
-            <h1>Page unavailable</h1>
-            <p>This page is not available for your account.</p>
-            <a className="primary" href={`#${home}`}>
-              Back to your workspace
-            </a>
-          </section>
-        ) : session.user.role === "Customer" ? (
-          <CustomerPage session={session} onExpired={expire} />
-        ) : (
-          <OwnerPage page={ownerPage} session={session} onExpired={expire} />
-        )}
-      </main>
-      <footer>
-        <span>BakeFlow</span>
-        <span>A little less admin. A little more baking.</span>
-        <span>ELEC5620 · Prototype</span>
-      </footer>
     </>
   );
 }

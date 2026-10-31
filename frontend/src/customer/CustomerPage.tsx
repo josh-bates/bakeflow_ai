@@ -16,6 +16,9 @@ import "./notifications.css";
 import { OwnerReviews } from "../components/OwnerReviews";
 import { Notice } from "../components/Notice";
 
+const EXAMPLE = "24 vanilla birthday cupcakes for collection on 2 Oct before 12:00, no allergy concerns";
+// Saved orders have long record ids; the first part is enough to tell them apart in the table.
+const shortId = (id: string) => (/^[0-9a-f]{8}-[0-9a-f-]+$/i.test(id) ? id.slice(0, 8) : id);
 // An order confirmed from an accepted quote can be paid until it is collected.
 const PAYABLE = ["Confirmed", "Scheduled", "InProduction", "Completed"];
 
@@ -93,6 +96,16 @@ export function CustomerPage({
     } finally {
       if (request === trackRequest.current) setTrackingBusy(false);
     }
+  }
+
+  function changeRequest(text: string) {
+    setMessage(text);
+    setAnswers([]);
+    setAnswer("");
+    setEnded(false);
+    setResult(null);
+    setSaved(null);
+    setError("");
   }
 
   // UC-05 steps 7-9 (BAKE-23): the customer sees only the owner-approved,
@@ -286,16 +299,8 @@ export function CustomerPage({
               maxLength={4000}
               required
               disabled={sending}
-              onChange={(e) => {
-                setMessage(e.target.value);
-                setAnswers([]);
-                setAnswer("");
-                setEnded(false);
-                setResult(null);
-                setSaved(null);
-                setError("");
-              }}
-              placeholder="24 vanilla birthday cupcakes for collection on 2 Oct before 12:00, no allergy concerns"
+              onChange={(e) => changeRequest(e.target.value)}
+              placeholder={EXAMPLE}
               aria-describedby="request-help"
             />
             <p id="request-help" className="field-help">
@@ -309,7 +314,7 @@ export function CustomerPage({
               <span aria-hidden="true">↗</span>
             </button>
           </form>
-          {session.mode === "mock" && !result && <p className="field-help">Offline demo: use the example in the text box. Mock mode supports preset examples only.</p>}
+          {session.mode === "mock" && !result && <p className="field-help demo-hint">Offline demo: mock mode supports preset examples only. <button type="button" className="text-button" disabled={sending} onClick={() => changeRequest(EXAMPLE)}>Use the example</button></p>}
           {result && (
             <section className="order-summary" aria-labelledby="summary-title" aria-live="polite">
               <p className="eyebrow">REVIEW YOUR REQUEST</p>
@@ -328,7 +333,7 @@ export function CustomerPage({
               </dl>
               <p className="field-help">Check the full date and year. If you omitted a year, the next occurrence is shown. No draft has been saved yet.</p>
               {result.issues.length > 0 && <Notice error><ul>{result.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></Notice>}
-              {result.issues.length > 0 && <section aria-labelledby="clarification-title">
+              {result.issues.length > 0 && <section className="clarify" aria-labelledby="clarification-title">
                 <h3 id="clarification-title">A few details before we continue</h3>
                 <ul>{result.questions.map(question => <li key={question}>{question}</li>)}</ul>
                 {answers.length > 0 && <details><summary>Your previous answers</summary><ol>{answers.map((text, index) => <li key={index}>{text}</li>)}</ol></details>}
@@ -383,7 +388,7 @@ export function CustomerPage({
           {quoteError && <Notice error>{quoteError}</Notice>}
           {quoteMessage && <Notice>{quoteMessage}</Notice>}
           {quote && <>
-            <p><strong>Total price: ${quote.total} (AUD)</strong></p>
+            <p className="total-line"><strong>Total price: ${quote.total} (AUD)</strong></p>
             <p className="field-help">Quote version {quote.version}. Accepting confirms your order at this price. No payment is taken now.</p>
             <div className="actions">
               <button className="primary" disabled={quoteBusy} onClick={() => decide(true)}>Accept quote</button>
@@ -398,7 +403,7 @@ export function CustomerPage({
           {payError && <Notice error>{payError}</Notice>}
           {payMessage && <Notice>{payMessage}</Notice>}
           {payment && <>
-            <p><strong>Amount due: ${payment.amount} (AUD)</strong></p>
+            <p className="total-line"><strong>Amount due: ${payment.amount} (AUD)</strong></p>
             <p className="field-help">Test mode: this is a simulated payment. No card details are needed and no money moves.</p>
             <div className="actions">
               <button className="primary" disabled={payBusy} onClick={() => pay("Succeeded")}>Pay ${payment.amount} (test)</button>
@@ -422,7 +427,7 @@ export function CustomerPage({
           </div>
         ) : (
           <div className="table-scroll">
-            <table>
+            <table className="order-list">
               <caption className="sr-only">
                 Orders belonging to your signed-in account
               </caption>
@@ -432,15 +437,13 @@ export function CustomerPage({
                   <th>Details</th>
                   <th>Required time</th>
                   <th>Status</th>
-                  <th>Tracking</th>
-                  <th>Quote</th>
-                  <th>Payment</th>
+                  <th>Next step</th>
                 </tr>
               </thead>
               <tbody>
                 {orders.map((order) => (
                   <tr key={order.id}>
-                    <th scope="row">{order.id}</th>
+                    <th scope="row" title={order.id}>{shortId(order.id)}</th>
                     <td>{order.summary}</td>
                     <td>
                       {order.requiredAt
@@ -452,11 +455,15 @@ export function CustomerPage({
                         : "To be arranged"}
                     </td>
                     <td>
-                      <span className="badge">{order.status}</span>
+                      <span className="badge" data-status={order.status}>{order.status}</span>
                     </td>
-                    <td><button className="secondary" aria-label={`Track order ${order.id}`} disabled={trackingBusy} onClick={() => track(order.id)}>Track order</button></td>
-                    <td>{order.status === "Quoted" ? <button className="primary" aria-label={`View quote for order ${order.id}`} disabled={quoteBusy} onClick={() => viewQuote(order.id)}>View quote</button> : <span className="muted">—</span>}</td>
-                    <td>{PAYABLE.includes(order.status) ? <button className="secondary" aria-label={`Pay for order ${order.id}`} disabled={payBusy} onClick={() => openPayment(order.id)}>Pay</button> : <span className="muted">—</span>}</td>
+                    <td>
+                      <div className="actions">
+                        {order.status === "Quoted" && <button className="primary" aria-label={`View quote for order ${order.id}`} disabled={quoteBusy} onClick={() => viewQuote(order.id)}>View quote</button>}
+                        {PAYABLE.includes(order.status) && <button className="primary" aria-label={`Pay for order ${order.id}`} disabled={payBusy} onClick={() => openPayment(order.id)}>Pay</button>}
+                        <button className="secondary" aria-label={`Track order ${order.id}`} disabled={trackingBusy} onClick={() => track(order.id)}>Track order</button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
