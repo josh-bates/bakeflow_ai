@@ -87,7 +87,6 @@ SOLD_STATUSES = frozenset(
 
 # Closed orders hold neither stock nor oven time. Same set as
 # InventoryService._CLOSED, so stock and capacity stay consistent.
-CLOSED_STATUSES = frozenset({OrderStatus.CANCELLED, OrderStatus.COMPLETED})
 
 # UC-07 2a: below this many recorded transactions in the history period, the
 # agent is told the data is thin and must produce a general suggestion with a
@@ -229,7 +228,9 @@ class MarketingService:
         profit = self.profitability.summary(
             period_start=history_start, period_end=history_end
         )
-        with self.store.unit_of_work() as session:
+        # One database state: a deduction lowers stock and completes its order
+        # in one commit, so reading across it would overstate what is available.
+        with self.store.snapshot() as session:
             demand = self._demand(session, profit, history_start, history_end)
             stock = self._stock(session)
             capacity = self._capacity(session, planning_start, planning_end)
@@ -325,7 +326,8 @@ class MarketingService:
             .where(
                 ProductionTask.start_at < end,
                 ProductionTask.end_at > start,
-                Order.status.not_in(list(CLOSED_STATUSES)),
+                # As ProductionPlanner._busy: a completed order's time was used.
+                Order.status != OrderStatus.CANCELLED,
             )
         )
         committed = sum(_overlap_minutes(task, start, end) for task in tasks)
