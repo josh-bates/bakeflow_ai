@@ -15,7 +15,7 @@ export const ownerPages = {
   },
   orders: {
     title: "Orders",
-    description: "A home for every customer occasion.",
+    description: "Change and cancellation requests from your customers.",
     detail:
       "Customer orders and their current status will appear here once the owner order service is connected.",
   },

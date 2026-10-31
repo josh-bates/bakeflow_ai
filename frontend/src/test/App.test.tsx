@@ -401,6 +401,27 @@ it("counts what is waiting on the owner's pages without changing the link names"
   expect(screen.getByRole("link", { name: "Pending approvals" })).not.toHaveAttribute("aria-description");
 });
 
+it("counts change requests and order exceptions that wait on the owner", async () => {
+  const change = (status: string) => ({ id: status, orderId: "o1", version: 1, kind: "Change", status, message: "change quantity to 36",
+    proposed: {}, ownerNote: null, quoteTotal: null, createdAt: "2026-11-01T00:00:00Z" });
+  const review = (id: string, status: string) => ({ id, version: 1, kind: "Refund", status, orderId: "o1", message: "Squashed box",
+    summary: null, conversation: [], resolution: null, createdAt: "2026-11-01T00:00:00Z" });
+  fetchMock.mockImplementation(async (url: string) =>
+    url === "/api/session" ? response(session("Owner")) :
+    url === "/api/owner/order-changes" ? response({ requests: ["Pending", "AwaitingApproval", "Quoted", "Applied"].map(change) }) :
+    url === "/api/exception-requests" ? response({ requests: [review("r1", "Pending"), review("r2", "AwaitingCustomer")] }) :
+    url === "/api/finance/quotes" ? response({ orders: [] }) :
+    response({}, 404));
+  // These two endpoints are answered empty for every other test; here they carry the counts.
+  vi.stubGlobal("fetch", fetchMock);
+  location.hash = "#/owner/orders";
+  render(<App />);
+  // A revised quote with the customer, or an applied change, is not the owner's move.
+  await waitFor(() => expect(screen.getByRole("link", { name: "Orders" })).toHaveAttribute("aria-description", "2 waiting"));
+  expect(screen.getByRole("link", { name: "Pending approvals" })).toHaveAttribute("aria-description", "1 waiting");
+  expect(screen.getByRole("link", { name: "Orders" })).not.toHaveTextContent("Soon");
+});
+
 it("offers the next step for each order in one column", async () => {
   const order = (id: string, status: string) => ({ id, status, summary: "24 cupcakes", requiredAt: "2027-10-02T02:00:00Z" });
   fetchMock.mockImplementation(async (url: string) =>

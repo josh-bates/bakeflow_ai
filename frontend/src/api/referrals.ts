@@ -1,4 +1,4 @@
-import { ApiError, type OrderSummary } from "./client";
+import { ApiError, DATA_CHANGED, type OrderSummary } from "./client";
 
 export type ReviewedSummary = OrderSummary & { allergen_statement?: string | null };
 export type RecipeChoice = { productId: string; recipeId: string; recipeVersion: number };
@@ -33,6 +33,7 @@ async function request(path: string, csrf?: string, body?: unknown): Promise<unk
     const data = await response.json().catch(() => null);
     throw new ApiError(response.status, typeof data?.detail === "string" ? data.detail : "The review could not be completed. Please refresh and retry.");
   }
+  if (body !== undefined) window.dispatchEvent(new Event(DATA_CHANGED));
   return response.json();
 }
 const invalid = () => { throw new Error("The server returned an invalid review. Please refresh."); };
