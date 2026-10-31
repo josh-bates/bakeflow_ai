@@ -218,6 +218,7 @@ it("lets an owner navigate orders and the exception review dashboard", async () 
   );
   render(<App />);
   await screen.findByRole("heading", { name: "Pending approvals" });
+  expect(screen.getByRole("heading", { name: "Order exceptions awaiting review" })).toBeInTheDocument();
   for (const title of [
     "Orders",
   ]) {
