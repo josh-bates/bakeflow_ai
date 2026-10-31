@@ -3,6 +3,7 @@ export type Session = {
   mode: "mock" | "live";
   csrfToken: string;
 };
+export type OrderNotification = { id: string; orderId: string; status: string; message: string; createdAt: string };
 export type Order = {
   id: string;
   summary: string;
@@ -408,6 +409,14 @@ function invalid(): never {
 }
 
 export const api = {
+  async notifications(): Promise<OrderNotification[]> {
+    const value = await request("/notifications");
+    if (!record(value) || !Array.isArray(value.notifications) ||
+        !value.notifications.every(n => record(n) &&
+          [n.id, n.orderId, n.status, n.message, n.createdAt].every(v => typeof v === "string") &&
+          Number.isFinite(Date.parse(String(n.createdAt))))) return invalid();
+    return value.notifications as OrderNotification[];
+  },
   async login(email: string, password: string): Promise<void> {
     try {
       await request("/auth/login", { method: "POST", headers: {

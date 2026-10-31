@@ -10,6 +10,8 @@ import {
   type CustomerQuote,
   type Payment,
 } from "../api/client";
+import { Notifications } from "./Notifications";
+import "./notifications.css";
 import { OwnerReviews } from "../components/OwnerReviews";
 import { Notice } from "../components/Notice";
 
@@ -264,6 +266,7 @@ export function CustomerPage({
           <figcaption><span>A MOMENT OF SWEETNESS</span><span>01 / Chocolate</span></figcaption>
         </figure>
       </section>
+      <Notifications refresh={reload} onExpired={onExpired} />
       <div className="customer-grid">
         <section className="card" aria-labelledby="request-title">
           <div className="request-intro">

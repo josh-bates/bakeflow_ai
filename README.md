@@ -213,6 +213,9 @@ session. Sign out revokes the session. See [BAKE-14 setup and API contract](docs
 for CSRF headers, shared permission dependencies and the optional local launcher.
 Deployment requires HTTPS; local development may use loopback HTTP.
 
+### Customer order notifications (BAKE-38)
+
+Customer **Order updates** refresh automatically after recorded order transitions. Notifications are private, deduplicated and template-based, and delivery failure cannot undo an order operation. No API key or email configuration is required. This is a new Stage 2 optional feature, absent from the Stage 1 feature diagram; see [design differences, failure recovery and demo steps](docs/bake38-notifications.md).
 ### BAKE-37 low-stock alerts (optional feature, design deviation)
 
 Low-stock alerts are a **new optional feature** ([O1] in the architecture), not

@@ -22,10 +22,12 @@ beforeEach(() => {
       url === "/api/session" ? response(session()) : response({ orders: [] }),
     );
   vi.stubGlobal("fetch", (url: string, options?: RequestInit) => {
+    if (url === "/api/notifications") return Promise.resolve(response({ notifications: [] }));
     if (url === "/api/exception-requests") return Promise.resolve(response({ requests: [] }));
     if (url === "/api/owner/exception-catalogue") return Promise.resolve(response({ products: [] }));
     return fetchMock(url, options);
   });
+
 });
 
 it("loads only the signed-in customer’s orders and never supplies a customer identity", async () => {

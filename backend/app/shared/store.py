@@ -39,6 +39,7 @@ Errors carry the stable codes from architecture §6.2: ``STALE_VERSION`` and
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -54,7 +55,7 @@ from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker
 from sqlalchemy.types import JSON
 
 from app.db.base import Base
-from app.shared.records import AuditEntry, ConstraintGuard, Versioning
+from app.shared.records import AuditEntry, ConstraintGuard, Versioning, Notification, WorkflowTransition
 from app.shared.records._common import RecordMixin
 from app.shared.refs import RecordRef
 
@@ -121,6 +122,15 @@ class ValidatedRecordStore:
                     yield session
             except (IntegrityError, DataError) as exc:
                 raise _validation_error(exc) from exc
+            # Delivery runs only after the business transaction has committed.
+            # Its failure must not turn a successful workflow into a failed one.
+            for transition_id in session.info.pop("notification_transitions", []):
+                try:
+                    from app.sales.notifications import deliver_notification
+                    deliver_notification(self, transition_id)
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "Notification delivery deferred; the recorded transition remains available.")
 
     @contextmanager
     def constraint_guard(self, bakery_id: int = GUARD_BAKERY_ID) -> Iterator[Session]:
@@ -202,8 +212,22 @@ class ValidatedRecordStore:
         session.add(record)
         self._flush(session, {record, *current_children, *removed_children})
         ref = self.ref(record) if model.__versioning__ is not Versioning.NONE else None
+        audit_id = uuid.uuid4()
+        transition = None
+        if model.__record_type__ == "Order":
+            from app.workflow.order_flow import WorkflowService
+            transition = WorkflowService.record_saved_order(
+                session, record, before, event_id=audit_id,
+                actor_id=actor_id, event_kind=action,
+            )
+            if transition is not None:
+                session.add(transition)
+                self._flush(session, {transition})
+                session.info.setdefault("notification_transitions", []).append(transition.transition_id)
         session.add(
             AuditEntry(
+                audit_id=audit_id,
+                transition_id=transition.transition_id if transition is not None else None,
                 subject_type=model.__record_type__,
                 subject_id=record.record_id,
                 subject_version=ref.version if ref else None,
@@ -556,14 +580,16 @@ def _guard_flush(session: Session, flush_context: Any, instances: Any) -> None:
     """Audit entries are append-only; records change only through commit()."""
     authorised = session.info.get(_AUTHORISED, set())
     for obj in session.deleted:
-        if isinstance(obj, AuditEntry):
+        if isinstance(obj, (AuditEntry, WorkflowTransition, Notification)):
             raise AuditImmutableError("audit entries cannot be deleted")
     for obj in session.dirty:
-        if isinstance(obj, AuditEntry) and session.is_modified(obj):
+        if isinstance(obj, (AuditEntry, WorkflowTransition, Notification)) and session.is_modified(obj):
             raise AuditImmutableError("audit entries cannot be changed")
     for obj in (*session.new, *session.dirty, *session.deleted):
         if isinstance(obj, AuditEntry) or obj in authorised:
             continue
+        if isinstance(obj, (WorkflowTransition, Notification)):
+            raise UnauditedWriteError("workflow notifications must use their recorded delivery path")
         if not isinstance(obj, RecordMixin) and type(obj) not in _owned_child_classes():
             continue
         if obj in session.dirty and not session.is_modified(obj):
