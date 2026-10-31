@@ -33,6 +33,7 @@ from app.shared.records.production import (
     ShoppingList,
 )
 from app.shared.records.receipts import InventoryReceipt
+from app.shared.records.referrals import OwnerReferral
 
 __all__ = [
     "AIRequest",
@@ -50,6 +51,7 @@ __all__ = [
     "InventoryReceipt",
     "MarketingContent",
     "Order",
+    "OwnerReferral",
     "OrderDeduction",
     "OrderDeductionLine",
     "OrderItem",

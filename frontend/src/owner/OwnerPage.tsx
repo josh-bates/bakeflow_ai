@@ -1,3 +1,4 @@
+import { OwnerReviews } from "../components/OwnerReviews";
 import type { Session } from "../api/client";
 import { AIActivityPage } from "./AIActivityPage";
 import { ApprovalsPage } from "./ApprovalsPage";
@@ -41,7 +42,7 @@ export const ownerPages = {
 export type OwnerPageName = keyof typeof ownerPages;
 
 export function OwnerPage({ page, session }: { page: OwnerPageName; session: Session }) {
-  if (page === "approvals") return <ApprovalsPage session={session} />;
+  if (page === "approvals") return <><ApprovalsPage session={session} /><OwnerReviews session={session} /></>;
   if (page === "finance") return <FinancePage session={session} />;
   if (page === "inventory") return <InventoryPage session={session} />;
   if (page === "schedules") return <SchedulesPage session={session} />;

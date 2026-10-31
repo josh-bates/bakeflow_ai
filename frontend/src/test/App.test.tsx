@@ -21,7 +21,11 @@ beforeEach(() => {
     .mockImplementation(async (url: string) =>
       url === "/api/session" ? response(session()) : response({ orders: [] }),
     );
-  vi.stubGlobal("fetch", fetchMock);
+  vi.stubGlobal("fetch", (url: string, options?: RequestInit) => {
+    if (url === "/api/exception-requests") return Promise.resolve(response({ requests: [] }));
+    if (url === "/api/owner/exception-catalogue") return Promise.resolve(response({ products: [] }));
+    return fetchMock(url, options);
+  });
 });
 
 it("loads only the signed-in customer’s orders and never supplies a customer identity", async () => {
@@ -207,13 +211,14 @@ it("blocks a customer from rendering an owner route", async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
-it("lets an owner navigate the clearly labelled placeholder pages", async () => {
+it("lets an owner navigate orders and the exception review dashboard", async () => {
   const user = userEvent.setup();
   fetchMock.mockImplementation(async (url: string) =>
     url === "/api/session" ? response(session("Owner")) : response({ orders: [] }),
   );
   render(<App />);
   await screen.findByRole("heading", { name: "Pending approvals" });
+  expect(screen.getByRole("heading", { name: "Order exceptions awaiting review" })).toBeInTheDocument();
   for (const title of [
     "Orders",
   ]) {
@@ -221,7 +226,8 @@ it("lets an owner navigate the clearly labelled placeholder pages", async () => 
     expect(
       await screen.findByRole("heading", { name: title }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/This page is a placeholder/)).toBeInTheDocument();
+    if (title === "Orders") expect(screen.getByText(/This page is a placeholder/)).toBeInTheDocument();
+    else expect(screen.getByRole("heading", { name: "Order exceptions awaiting review" })).toBeInTheDocument();
   }
   // The session, then the quote queue on Pending approvals (BAKE-23).
   expect(fetchMock).toHaveBeenCalledTimes(2);

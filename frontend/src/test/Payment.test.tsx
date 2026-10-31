@@ -28,6 +28,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   location.hash = "#/customer";
   routes = {
+    "GET /api/exception-requests": () => response({ requests: [] }),
     "GET /api/orders/mine": () =>
       response({ orders: [{ id: ORDER, summary: "24 Vanilla cupcake", status: "Confirmed", requiredAt: "2026-11-05T01:00:00+00:00" }] }),
     [`GET /api/orders/${ORDER}/payments`]: () => response({ payments: [] }),
@@ -49,7 +50,8 @@ it("pays the confirmed order's quote total in test mode", async () => {
   const user = userEvent.setup();
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: `Pay for order ${ORDER}` }));
+  await screen.findByText("24 Vanilla cupcake", {}, { timeout: 5000 });
+  await user.click(screen.getByRole("button", { name: `Pay for order ${ORDER}` }));
   const card = await screen.findByRole("region", { name: /Payment for order aaaaaaaa/ });
   expect(within(card).getByText(/Amount due: \$94.23/)).toBeInTheDocument();
   expect(within(card).getByText(/No card details are needed/)).toBeInTheDocument();
@@ -68,7 +70,8 @@ it("shows a declined payment clearly and lets the customer try again", async () 
   const user = userEvent.setup();
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: `Pay for order ${ORDER}` }));
+  await screen.findByText("24 Vanilla cupcake", {}, { timeout: 5000 });
+  await user.click(screen.getByRole("button", { name: `Pay for order ${ORDER}` }));
   await user.click(await screen.findByRole("button", { name: "Simulate a declined payment" }));
 
   expect(await screen.findByText(/did not go through\. Nothing was charged\./)).toBeInTheDocument();
@@ -82,7 +85,8 @@ it("explains why a success could not be recorded", async () => {
   const user = userEvent.setup();
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: `Pay for order ${ORDER}` }));
+  await screen.findByText("24 Vanilla cupcake", {}, { timeout: 5000 });
+  await user.click(screen.getByRole("button", { name: `Pay for order ${ORDER}` }));
   await user.click(await screen.findByRole("button", { name: "Pay $94.23 (test)" }));
 
   expect(await screen.findByText(/not accepted, current and approved\. Nothing was charged/)).toBeInTheDocument();
@@ -93,7 +97,8 @@ it("does not start a second payment for an order already paid", async () => {
   const user = userEvent.setup();
   render(<App />);
 
-  await user.click(await screen.findByRole("button", { name: `Pay for order ${ORDER}` }));
+  await screen.findByText("24 Vanilla cupcake", {}, { timeout: 5000 });
+  await user.click(screen.getByRole("button", { name: `Pay for order ${ORDER}` }));
 
   expect(await screen.findByText("Paid $94.23. Thank you!")).toBeInTheDocument();
   expect(posts(`/api/orders/${ORDER}/payments`)).toHaveLength(0);

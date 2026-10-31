@@ -10,6 +10,7 @@ import {
   type CustomerQuote,
   type Payment,
 } from "../api/client";
+import { OwnerReviews } from "../components/OwnerReviews";
 import { Notice } from "../components/Notice";
 
 // An order confirmed from an accepted quote can be paid until it is collected.
@@ -460,6 +461,7 @@ export function CustomerPage({
           </div>
         )}
       </section>
+      <OwnerReviews session={session} refreshKey={result} onExpired={onExpired} />
     </>
   );
 }
