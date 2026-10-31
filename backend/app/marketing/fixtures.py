@@ -29,3 +29,24 @@ def campaign_reply(
             "confidence": confidence,
         }
     )
+
+
+def content_reply(
+    *,
+    claims: list[tuple[uuid.UUID, str]],
+    body: str | None = None,
+    confidence: float = MOCK_CONFIDENCE,
+) -> str:
+    """One well-formed post. ``claims`` is (product_id, price) as a string."""
+    if body is None:
+        prices = " and ".join(f"${price}" for _, price in claims)
+        body = f"Fresh from the oven this week — {prices}. Order by Friday!"
+    return json.dumps(
+        {
+            "body": body,
+            "claims": [
+                {"product_id": str(product_id), "price": price} for product_id, price in claims
+            ],
+            "confidence": confidence,
+        }
+    )

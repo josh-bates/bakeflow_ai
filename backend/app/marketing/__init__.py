@@ -12,9 +12,17 @@ from app.marketing.campaigns import (
     MIN_CONFIDENCE,
     CampaignPlanner,
     CampaignProposal,
+    ContentProposal,
     MarketingAgent,
     PlanOutcome,
     PlanStatus,
+    ProductClaim,
+)
+from app.marketing.content import (
+    PLATFORMS,
+    ContentOutcome,
+    ContentPlanner,
+    ContentStatus,
 )
 from app.marketing.summary import (
     MIN_LEDGER_TRANSACTIONS,
@@ -23,6 +31,7 @@ from app.marketing.summary import (
     CapacityPosition,
     MarketingService,
     ProductDemand,
+    ProductFacts,
     StockPosition,
 )
 
@@ -33,13 +42,20 @@ __all__ = [
     "MIN_LEDGER_TRANSACTIONS",
     "SOLD_STATUSES",
     "BusinessSummary",
+    "PLATFORMS",
     "CampaignPlanner",
     "CampaignProposal",
     "CapacityPosition",
+    "ContentOutcome",
+    "ContentPlanner",
+    "ContentProposal",
+    "ContentStatus",
     "MarketingAgent",
     "MarketingService",
     "PlanOutcome",
     "PlanStatus",
+    "ProductClaim",
+    "ProductFacts",
     "ProductDemand",
     "StockPosition",
 ]

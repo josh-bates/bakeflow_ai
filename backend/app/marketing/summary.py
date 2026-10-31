@@ -49,7 +49,7 @@ import math
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, select
@@ -61,6 +61,12 @@ from app.pricing_bookkeeping.profitability import (
     ProfitabilitySummary,
     ProfitLine,
 )
+from app.pricing_bookkeeping.quotation import (
+    CostingInputs,
+    FinanceService,
+    IngredientRequirement,
+    QuoteLine,
+)
 from app.shared.records import (
     BakerySettings,
     InventoryItem,
@@ -70,10 +76,13 @@ from app.shared.records import (
     Product,
     ProductionSchedule,
     ProductionTask,
+    Recipe,
 )
 from app.shared.store import ValidatedRecordStore
 
 ZERO = Decimal("0.00")
+# The quantity column keeps three decimal places.
+_PER_UNIT = Decimal("0.001")
 
 # An order counts as sold once the customer has committed to it.
 SOLD_STATUSES = frozenset(
@@ -118,6 +127,24 @@ class StockPosition:
     # On hand less what released plans of active orders commit; negative if
     # the item is over-committed.
     available: Decimal
+
+
+@dataclass(frozen=True)
+class ProductFacts:
+    """What marketing content may claim about one product (BAKE-35).
+
+    ``price`` is indicative: the per-unit price ``FinanceService`` would
+    calculate for this product from its recipe, the owner's labour rate and
+    target margin. The bakery stores no sale price, so this is the only
+    figure a post can quote without inventing one, and it comes from the same
+    calculator that prices a real quotation.
+    """
+
+    product_id: uuid.UUID
+    name: str
+    price: Decimal
+    # Enough available stock to make at least one more of it today.
+    available: bool
 
 
 @dataclass(frozen=True)
@@ -337,6 +364,92 @@ class MarketingService:
             end_date=end_date,
             committed_minutes=committed,
         )
+
+
+    def product_facts(self, session: Session) -> dict[uuid.UUID, ProductFacts]:
+        """Name, indicative price and availability for every product (BAKE-35).
+
+        The price is calculated, not stored: one unit of the product, costed
+        from its recipe by ``FinanceService`` with the owner's labour rate and
+        target margin. Per-unit ingredient quantities are the batch quantity
+        divided by the recipe's yield, rounded to the quantity column's three
+        decimal places -- the one rounding step, and the reason this is called
+        indicative rather than a quotation.
+        """
+        settings = session.scalars(select(BakerySettings)).one()
+        finance = FinanceService()
+        costs = dict(
+            session.execute(select(InventoryItem.item_id, InventoryItem.unit_cost)).all()
+        )
+        stock = {line.item_id: line.available for line in self._stock(session)}
+
+        facts: dict[uuid.UUID, ProductFacts] = {}
+        for product in session.scalars(select(Product)):
+            recipe = session.scalars(
+                select(Recipe).where(Recipe.product_id == product.product_id)
+            ).one_or_none()
+            if recipe is None:
+                continue
+            needs = {
+                line.inventory_item_id: (
+                    line.quantity_per_batch / recipe.yield_units
+                ).quantize(_PER_UNIT, rounding=ROUND_HALF_UP)
+                for line in recipe.ingredients
+            }
+            calculation = finance.calculate_quote(
+                CostingInputs(
+                    lines=(
+                        QuoteLine(
+                            product_id=str(product.product_id),
+                            quantity=1,
+                            labour_minutes_per_unit=product.labour_minutes,
+                            packaging_cost_per_unit=product.packaging_cost,
+                        ),
+                    ),
+                    ingredient_requirements=tuple(
+                        IngredientRequirement(
+                            inventory_item_id=str(item_id),
+                            quantity=quantity,
+                            unit_cost=costs.get(item_id, Decimal("0.0000")),
+                        )
+                        for item_id, quantity in needs.items()
+                    ),
+                    labour_rate_per_hour=settings.labour_rate_per_hour,
+                    target_margin=settings.target_profit_margin,
+                )
+            )
+            facts[product.product_id] = ProductFacts(
+                product_id=product.product_id,
+                name=product.name,
+                price=calculation.total,
+                available=all(
+                    stock.get(item_id, Decimal(0)) >= quantity
+                    for item_id, quantity in needs.items()
+                ),
+            )
+        return facts
+
+    def validate_claims(
+        self, session: Session, claims: dict[uuid.UUID, Decimal]
+    ) -> list[str]:
+        """UC-08 step 4: check claimed products and prices against the records.
+
+        Returns every problem, so one regeneration can fix them all.
+        """
+        facts = self.product_facts(session)
+        problems: list[str] = []
+        for product_id, price in claims.items():
+            fact = facts.get(product_id)
+            if fact is None:
+                problems.append(f"product {product_id} is not in the catalogue")
+                continue
+            if price != fact.price:
+                problems.append(
+                    f"{fact.name} is priced {fact.price}, not {price}"
+                )
+            if not fact.available:
+                problems.append(f"{fact.name} cannot be made with the stock available")
+        return problems
 
 
 def _overlap_minutes(task: ProductionTask, start: datetime, end: datetime) -> int:
