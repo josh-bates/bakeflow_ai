@@ -23,6 +23,7 @@ from app.marketing.content import (
     ContentOutcome,
     ContentPlanner,
     ContentStatus,
+    ExportOutcome,
 )
 from app.marketing.summary import (
     MIN_LEDGER_TRANSACTIONS,
@@ -50,6 +51,7 @@ __all__ = [
     "ContentPlanner",
     "ContentProposal",
     "ContentStatus",
+    "ExportOutcome",
     "MarketingAgent",
     "MarketingService",
     "PlanOutcome",

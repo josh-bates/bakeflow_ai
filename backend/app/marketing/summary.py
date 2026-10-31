@@ -429,6 +429,16 @@ class MarketingService:
             )
         return facts
 
+    @staticmethod
+    def export_approved(content) -> str:
+        """The approved version as text for the owner to post by hand (BAKE-36).
+
+        Nothing is published from here: the system hands over text and a
+        time, and a person does the posting.
+        """
+        when = content.scheduled_at.isoformat() if content.scheduled_at else "unscheduled"
+        return f"[{content.platform} | {when}]\n{content.body}"
+
     def validate_claims(
         self, session: Session, claims: dict[uuid.UUID, Decimal]
     ) -> list[str]:
