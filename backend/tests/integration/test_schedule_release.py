@@ -7,8 +7,8 @@ version by ``logical_task_id``, including progress made after the draft;
 unsafe changes to started or completed work are refused; competing releases
 cannot both use the same stock (T-IP02-RACE, T-APPROVAL-STALE, T-C1-REPLAN).
 
-Task progress and order cancellation are BAKE-33 and BAKE-30; the helpers
-below stand in for their guarded writes.
+Task progress is BAKE-33's ``TaskProgress``. Order cancellation is BAKE-30;
+``cancel`` below stands in for its guarded write.
 """
 
 import threading
@@ -28,10 +28,12 @@ from app.config import Settings
 from app.inventory_production import (
     InventoryService,
     PlanStatus,
+    ProgressRefused,
     ProductionPlanner,
     ReleaseStatus,
     ScheduleRelease,
     ScheduleState,
+    TaskProgress,
 )
 from app.inventory_production.fixtures import GreedyMockPlanner, proposal_reply
 from app.inventory_production.routes import make_router
@@ -47,7 +49,6 @@ from app.shared.records import (
     OrderItem,
     OrderStatus,
     ProductionSchedule,
-    ProductionScheduleVersion,
     ProductionTask,
     TaskStatus,
 )
@@ -98,19 +99,21 @@ def approve(store, seeded, ref):
     return ScheduleRelease(store).approve(ref.record_id, ref.version, owner_id=seeded.owner_id)
 
 
-def progress(store, seeded, schedule_ref, kind, status):
-    """Stand-in for BAKE-33's guarded progress on the released version's task."""
-    with store.constraint_guard() as session:
+def released_tasks(store, schedule_ref, **where):
+    """Ids of the released version's tasks matching ``where``, in time order."""
+    with store.unit_of_work() as session:
         schedule = store.load(session, ProductionSchedule, schedule_ref.record_id)
-        task = session.scalars(
-            select(ProductionTask).where(
-                ProductionTask.schedule_id == schedule.schedule_id,
-                ProductionTask.schedule_version == schedule.released_version,
-                ProductionTask.task_kind == kind,
-            )
-        ).one()
-        task.status = status
-        store.commit(session, task, actor_id=seeded.owner_id, action="test.progress")
+        return session.scalars(
+            select(ProductionTask.task_id)
+            .filter_by(schedule_id=schedule.schedule_id, schedule_version=schedule.released_version, **where)
+            .order_by(ProductionTask.start_at)
+        ).all()
+
+
+def progress(store, seeded, schedule_ref, kind, status):
+    """BAKE-33's guarded progress on the released version's ``kind`` task."""
+    [task_id] = released_tasks(store, schedule_ref, task_kind=kind)
+    TaskProgress(store).record(schedule_ref.record_id, task_id, status, actor_id=seeded.owner_id)
 
 
 def cancel(store, seeded, ref):
@@ -254,9 +257,11 @@ def test_concurrent_releases_cannot_both_use_the_same_flour(store, seeded):
     assert flour_committed(store, seeded) == Decimal("600.000")
 
 
-def test_order_released_in_another_plan_blocks_this_one(store, seeded):
+def test_order_released_in_another_plan_blocks_this_one(store, seeded, monkeypatch):
     order(store, seeded)
-    first, second = plan(store, seeded), plan(store, seeded)  # both drafts hold the order
+    # Plans saved before BAKE-20's check can both hold the order; release still refuses the second.
+    monkeypatch.setattr(ProductionPlanner, "_unreleased_elsewhere", staticmethod(lambda *_: set()))
+    first, second = plan(store, seeded), plan(store, seeded)
     assert approve(store, seeded, first).status is ReleaseStatus.RELEASED
 
     outcome = approve(store, seeded, second)
@@ -336,7 +341,8 @@ def test_release_copies_progress_made_after_the_draft(store, seeded):
     assert tasks_of(store, first, 1)["bake"] == TaskStatus.COMPLETED
     # The revision replaces the released commitment rather than adding to it.
     assert flour_committed(store, seeded) == Decimal("600.000")
-    assert status_of(store, cupcakes) == OrderStatus.SCHEDULED
+    # The finished bake put the order in production, and the release keeps it there.
+    assert status_of(store, cupcakes) == OrderStatus.IN_PRODUCTION
 
 
 @pytest.mark.parametrize(("status", "words"), [(TaskStatus.IN_PROGRESS, "in progress"), (TaskStatus.COMPLETED, "completed")])
@@ -344,8 +350,8 @@ def test_plan_that_moves_started_work_is_refused(store, seeded, status, words):
     cupcakes = order(store, seeded)
     first = plan(store, seeded, figure10(cupcakes))
     approve(store, seeded, first)
+    progress(store, seeded, first, "bake", status)  # before the revision, which then pauses it
     revised = plan(store, seeded, figure10(cupcakes, at(8)), schedule_id=first.record_id)
-    progress(store, seeded, first, "bake", status)
 
     outcome = approve(store, seeded, revised)
 
@@ -395,7 +401,7 @@ def test_withheld_plan_stays_pending_and_can_be_approved_later(store, seeded):
     assert status_of(store, cupcakes) == OrderStatus.CONFIRMED
     shown = view(store, ref)
     assert shown.state is ScheduleState.AWAITING_APPROVAL
-    assert shown.notice.startswith("You withheld approval of version 1. It stays unapproved")
+    assert shown.notice.startswith("You haven't approved version 1 yet. It stays unreleased")
     assert approve(store, seeded, ref).status is ReleaseStatus.RELEASED
 
 
@@ -413,29 +419,11 @@ def test_withholding_a_decided_or_old_version_is_refused(store, seeded):
 
 
 def complete(store, seeded, schedule_ref, order_ref):
-    """Stand-in for BAKE-33's TX-DEDUCT: finish the order's released tasks, deduct once, close it."""
-    with store.constraint_guard() as session:
-        schedule = store.load(session, ProductionSchedule, schedule_ref.record_id)
-        tasks = session.scalars(
-            select(ProductionTask).where(
-                ProductionTask.schedule_id == schedule.schedule_id,
-                ProductionTask.schedule_version == schedule.released_version,
-                ProductionTask.order_id == order_ref.record_id,
-            )
-        ).all()
-        for task in tasks:
-            task.status = TaskStatus.COMPLETED
-            store.commit(session, task, actor_id=seeded.owner_id, action="test.progress")
-        snapshot = session.get(ProductionScheduleVersion, (schedule.schedule_id, schedule.released_version))
-        for item_id, quantity in snapshot.requirements_snapshot[str(order_ref.record_id)].items():
-            item = session.get(InventoryItem, uuid.UUID(item_id))
-            item.quantity_on_hand -= Decimal(quantity)
-            store.commit(session, item, actor_id=seeded.owner_id, action="test.deduct",
-                         expected_version=item.version, revise=True)
-        record = store.load(session, Order, order_ref.record_id)
-        record.status = OrderStatus.COMPLETED
-        store.commit(session, record, actor_id=seeded.owner_id, action="test.complete",
-                     expected_version=record.version)
+    """BAKE-33: finish the order's released tasks; the last one deducts its stock once (TX-DEDUCT)."""
+    progress = TaskProgress(store)
+    for task_id in released_tasks(store, schedule_ref, order_id=order_ref.record_id):
+        outcome = progress.record(schedule_ref.record_id, task_id, TaskStatus.COMPLETED, actor_id=seeded.owner_id)
+    assert outcome.order_status == OrderStatus.COMPLETED
 
 
 @pytest.mark.parametrize("when", ["before the revision", "while it awaits approval"])
@@ -467,18 +455,42 @@ def test_order_completed_meanwhile_does_not_block_the_rest_of_the_plan(store, se
         assert done.record_id not in statuses
 
 
-def test_completed_order_whose_tasks_the_revision_moves_is_refused(store, seeded):
-    done = order(store, seeded, cupcakes=12)
+def test_revision_cannot_add_work_to_an_order_completed_meanwhile(store, seeded):
+    done = order(store, seeded)
     first = plan(store, seeded, figure10(done))
     approve(store, seeded, first)
-    revised = plan(store, seeded, figure10(done, at(8)), schedule_id=first.record_id)
+    # Keeps the bake and finish unchanged, so they can be done meanwhile, and adds a second finish.
+    extra = {**figure10(done)[1], "start_at": at(8).isoformat(), "end_at": at(8, 30).isoformat()}
+    revised = plan(store, seeded, figure10(done) + [extra], schedule_id=first.record_id)
     complete(store, seeded, first, done)
 
     outcome = approve(store, seeded, revised)
 
+    # Deducted and Completed, the order could never do that finish (IP-01).
     assert outcome.status is ReleaseStatus.BLOCKED
-    assert outcome.problems
-    assert all("is completed, and this plan moves or removes it" in p for p in outcome.problems)
+    assert outcome.problems == (
+        f"The finish task for order {str(done.record_id)[:8]} (Thu 08:00–08:30) adds work to order"
+        f" {str(done.record_id)[:8]}, which is already completed. Request a revised plan.",
+    )
+    with store.unit_of_work() as session:
+        assert store.load(session, ProductionSchedule, first.record_id).released_version == 1
+        assert session.get(InventoryItem, seeded.items["Flour"]).quantity_on_hand == Decimal("400.000")
+
+
+def test_order_whose_tasks_the_pending_revision_moves_waits_for_it(store, seeded):
+    moved = order(store, seeded, cupcakes=12)
+    first = plan(store, seeded, figure10(moved))
+    approve(store, seeded, first)
+    revised = plan(store, seeded, figure10(moved, at(8)), schedule_id=first.record_id)
+
+    # Paused rather than completed under a plan that moves it, so the release is safe.
+    with pytest.raises(ProgressRefused, match="is paused: version 2 of this plan moves or removes it"):
+        complete(store, seeded, first, moved)
+    assert approve(store, seeded, revised).status is ReleaseStatus.RELEASED
+
+    complete(store, seeded, revised, moved)
+    with store.unit_of_work() as session:
+        assert session.get(InventoryItem, seeded.items["Flour"]).quantity_on_hand == Decimal("700.000")
 
 
 def test_failed_save_rolls_back_the_decision_and_the_release(store, seeded, monkeypatch):

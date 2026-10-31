@@ -87,6 +87,24 @@ class MockShortageExplainer:
         return explanation_reply(" ".join(sentences))
 
 
+@dataclass
+class MockLowStockExplainer:
+    """Implements ILLMClient for the ``explain_low_stock`` task only (BAKE-37)."""
+
+    calls: list[str] = field(default_factory=list)
+
+    def complete(self, prompt: str) -> str:
+        self.calls.append(prompt)
+        lines = json.loads(prompt.rsplit("TaskRequest: ", 1)[1])["inputData"]["ingredients"]
+        return explanation_reply(" ".join(
+            f"{line['ingredient']}: {line['on_hand']} {line['unit']} on hand and"
+            f" {line['committed']} {line['unit']} committed to released plans, below its reorder"
+            f" level of {line['reorder_level']} {line['unit']}."
+            f" Suggested reorder: {line['suggested_reorder']} {line['unit']}."
+            for line in lines
+        ))
+
+
 def _after_busy(start: datetime, length: timedelta, busy: list[tuple[datetime, datetime]]) -> datetime:
     """The first start at or after ``start`` that does not overlap a busy interval."""
     for busy_start, busy_end in busy:

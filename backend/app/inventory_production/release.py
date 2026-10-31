@@ -18,9 +18,10 @@ for exactly one ``ProductionSchedule`` version:
    and unchanged times. A started, blocked or completed task that the new
    version moves or drops is refused; the owner keeps it in a revised plan.
    An order completed (and deducted, IP-01) meanwhile is not checked for
-   stock or labour again: kept, its tasks must be unchanged; left out, its
-   finished tasks stay recorded in the earlier version, and their time still
-   counts against the day's capacity in every later plan.
+   stock or labour again: kept, the version must hold exactly its finished
+   tasks, unchanged, so it adds no work that could never be done; left out,
+   its finished tasks stay recorded in the earlier version, and their time
+   still counts against the day's capacity in every later plan.
 4. ``TX-SCHEDULE-RELEASE`` sets ``released_version``, so the new snapshot
    replaces the old commitments in one step. Its orders become Scheduled, and
    Scheduled orders the revision left out become Confirmed again, so they can
@@ -257,8 +258,9 @@ class ScheduleRelease:
                 problems.append(f"{label} is now in another released plan.")
             elif order_id in finished:
                 # Completed while this version waited [C1]: its tasks must stay
-                # as they were and take their Completed status, but its stock is
-                # already deducted and its work done, so neither is checked again.
+                # as they were and take their Completed status (checked after
+                # the carry below), but its stock is already deducted and its
+                # work done, so neither is checked again.
                 demands[order_id] = OrderDemand(order.required_at, 0)
             elif not (
                 order.status == OrderStatus.CONFIRMED
@@ -296,6 +298,7 @@ class ScheduleRelease:
             session, schedule, tasks, window.zone, done=finished - set(source)
         )
         problems += unsafe
+        problems += _added_to_completed(tasks, carried, finished & set(source), window.zone)
         if not self.approvals.is_approved(session, ref, ApprovalKind.SCHEDULE):
             problems.append("The approval is no longer current.")
         return problems, _Checked(schedule, orders, set(source), carried)
@@ -408,7 +411,7 @@ class ScheduleRelease:
             state, notice = ScheduleState.AWAITING_APPROVAL, ""
             if _withheld(session, request):
                 notice = (
-                    f"You withheld approval of {label.lower()}. It stays unapproved and unreleased"
+                    f"You haven't approved {label.lower()} yet. It stays unreleased"
                     " until you approve it or request a revised plan."
                 )
         else:
@@ -416,6 +419,26 @@ class ScheduleRelease:
             reason = request.invalidation_reason or "The release did not complete."
             notice = f"{label} could not be released: {reason} Request a revised plan."
         return ScheduleView(ref, state, latest, released, schedule.released_version, notice)
+
+
+def _added_to_completed(
+    tasks: Sequence[ProductionTask],
+    carried: Sequence[tuple[ProductionTask, str]],
+    completed: set[uuid.UUID],
+    zone: ZoneInfo,
+) -> list[str]:
+    """Tasks a version gives a completed order besides its finished ones.
+
+    The order is deducted and Completed (IP-01), so such a task could never
+    be started or done; it would only hold the team's time.
+    """
+    finished = {task.task_id for task, status in carried if status == TaskStatus.COMPLETED}
+    return [
+        f"{_describe(t, zone)} adds work to order {str(t.order_id)[:8]}, which is already completed."
+        " Request a revised plan."
+        for t in tasks
+        if t.order_id in completed and t.task_id not in finished
+    ]
 
 
 def _withheld(session: Session, request: ApprovalRequest) -> bool:

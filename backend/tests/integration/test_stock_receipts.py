@@ -377,6 +377,8 @@ def test_api_records_replays_and_refuses_a_changed_quantity(api, store, seeded):
     assert listed["Flour"] | {"id": None} == {
         "id": None, "ingredient": "Flour", "unit": "g",
         "onHand": "3500.000", "committed": "0.000", "available": "3500.000",
+        # BAKE-37: the seeded reorder level; the receipt revised the item.
+        "reorderLevel": "200.000", "version": 2, "low": False, "suggestedReorder": None,
     }
     assert on_hand(store, seeded.items["Flour"]) == (Decimal("3500.000"), 2)
 
