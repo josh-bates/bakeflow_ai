@@ -460,3 +460,19 @@ def test_order_waiting_in_another_plan_is_left_out_until_that_plan_is_revised(st
     assert "already in another plan" in again.excluded[0].reason
     revised = propose(store, seeded, GreedyMockPlanner(), schedule_id=first.schedule_ref.record_id)
     assert revised.status is PlanStatus.PROPOSED
+
+
+def test_plan_saved_for_the_same_order_while_planning_stops_this_one(store, seeded):
+    ref = order(store, seeded)
+    saved = []
+    client = ChangingClient(
+        lambda: saved.append(propose(store, seeded, GreedyMockPlanner())), proposal_reply(figure10(ref))
+    )
+
+    outcome = propose(store, seeded, client)
+
+    assert saved[0].status is PlanStatus.PROPOSED
+    assert outcome.status is PlanStatus.NEEDS_REVISION
+    assert outcome.schedule_ref is None
+    assert "is now in another plan" in outcome.problems[0]
+    assert count(store, ProductionSchedule) == 1

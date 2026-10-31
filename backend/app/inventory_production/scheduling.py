@@ -327,6 +327,11 @@ class ProductionPlanner(WorkflowService):
             moved = [str(order_id)[:8] for order_id in needs if order_id in elsewhere]
             if moved:
                 return refused(f"Order {', '.join(moved)} is now in another released plan.")
+            # Another request may have saved a plan for these orders while the agent ran.
+            waiting = self._unreleased_elsewhere(session, schedule_id)
+            taken = [str(order_id)[:8] for order_id in needs if order_id in waiting]
+            if taken:
+                return refused(f"Order {', '.join(taken)} is now in another plan. Approve that plan or request a revised one.")
             shortages = self.inventory.check_plan(
                 session, needs, exclude_orders=self._released_here(session, schedule_id)
             )

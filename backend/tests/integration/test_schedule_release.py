@@ -259,7 +259,7 @@ def test_concurrent_releases_cannot_both_use_the_same_flour(store, seeded):
 
 def test_order_released_in_another_plan_blocks_this_one(store, seeded, monkeypatch):
     order(store, seeded)
-    # Two plans saved at the same moment can both hold the order; release still refuses the second.
+    # Plans saved before BAKE-20's check can both hold the order; release still refuses the second.
     monkeypatch.setattr(ProductionPlanner, "_unreleased_elsewhere", staticmethod(lambda *_: set()))
     first, second = plan(store, seeded), plan(store, seeded)
     assert approve(store, seeded, first).status is ReleaseStatus.RELEASED
