@@ -14,9 +14,12 @@ was scheduled is never published under the old approval.
 Published at most once
 ----------------------
 The guarantee lives in the database: a partial unique index allows any number
-of failed attempts but only one published row per (content, version). A retry
-after a success returns the stored result and posts nothing; a retry after a
-failure is free to try again. Both the success and the failure are written
+of failed attempts but only one claimed or published row per (content, version).
+An attempt claims its row as ``Publishing`` before calling the channel, so an
+overlapping publish hits the index and posts nothing. A retry after a success
+returns the stored result; a retry after a failure is free to try again. A crash
+after the claim leaves a visible ``Publishing`` row rather than a silent re-post.
+Both the success and the failure are written
 through ``ValidatedRecordStore``, so each one lands in the audit log with the
 actor and the time.
 
@@ -34,17 +37,20 @@ from enum import StrEnum
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.marketing.content import CAMPAIGN_REVISED_PROBLEM, campaign_still_approved
 from app.marketing.summary import MarketingService
 from app.shared.approvals import ApprovalKind, ApprovalService
 from app.shared.records import MockPublication, MarketingContent
 from app.shared.refs import RecordRef
-from app.shared.store import ValidatedRecordStore
+from app.shared.store import RecordValidationError, ValidatedRecordStore
 
 PUBLISH_ACTION = "content.published"
 FAILURE_ACTION = "content.publish_failed"
+CLAIM_ACTION = "content.claim_publication"
 
 
 class PublicationStatus(StrEnum):
+    PUBLISHING = "Publishing"
     PUBLISHED = "Published"
     FAILED = "Failed"
 
@@ -52,6 +58,8 @@ class PublicationStatus(StrEnum):
 class PublishStatus(StrEnum):
     PUBLISHED = "Published"
     ALREADY_PUBLISHED = "AlreadyPublished"
+    IN_PROGRESS = "InProgress"
+    CAMPAIGN_REVISED = "CampaignRevised"
     NOT_APPROVED = "NotApproved"
     NOT_READY = "NotReady"
     NOT_IN_CALENDAR = "NotInCalendar"
@@ -115,22 +123,36 @@ class ContentPublisher:
 
     def publish(self, content: RecordRef, *, owner_id: uuid.UUID) -> PublishOutcome:
         """Publish one content version, or say why it cannot be published."""
-        with self.store.unit_of_work() as session:
-            done = self._published(session, content)
-            if done is not None:
-                # Idempotent: the stored result, and nothing posted again.
-                return PublishOutcome(
-                    PublishStatus.ALREADY_PUBLISHED, content=content, reference=done.reference
+        try:
+            with self.store.unit_of_work() as session:
+                done = self._claimed(session, content)
+                if done is not None and done.status == PublicationStatus.PUBLISHING:
+                    return self._in_progress(content)
+                if done is not None:
+                    # Idempotent: the stored result, and nothing posted again.
+                    return PublishOutcome(
+                        PublishStatus.ALREADY_PUBLISHED, content=content, reference=done.reference
+                    )
+                refusal = self._refusal(session, content)
+                if refusal is not None:
+                    return refusal
+                text = self.marketing.export_approved(self.store.load_ref(session, content))
+                claim = MockPublication(
+                    content_id=content.record_id,
+                    content_version=content.version,
+                    channel=self.channel.name,
+                    status=PublicationStatus.PUBLISHING,
                 )
-            refusal = self._refusal(session, content)
-            if refusal is not None:
-                return refusal
-            text = self.marketing.export_approved(self.store.load_ref(session, content))
+                self.store.commit(session, claim, actor_id=owner_id, action=CLAIM_ACTION)
+                claim_id = claim.publication_id
+        except RecordValidationError:
+            # An overlapping publish claimed this version first (the unique index).
+            return self._in_progress(content)
 
         try:
             reference = self.channel.post(text)
         except ChannelError as exc:
-            self._record_failure(content, str(exc), owner_id=owner_id)
+            self._record_failure(claim_id, str(exc), owner_id=owner_id)
             # The content keeps its approval and its place in the calendar,
             # so the owner can still export and post it by hand.
             return PublishOutcome(
@@ -138,19 +160,11 @@ class ContentPublisher:
             )
 
         with self.store.unit_of_work() as session:
-            self.store.commit(
-                session,
-                MockPublication(
-                    content_id=content.record_id,
-                    content_version=content.version,
-                    channel=self.channel.name,
-                    status=PublicationStatus.PUBLISHED,
-                    reference=reference,
-                    published_at=datetime.now(UTC),
-                ),
-                actor_id=owner_id,
-                action=PUBLISH_ACTION,
-            )
+            claim = self.store.load(session, MockPublication, claim_id)
+            claim.status = PublicationStatus.PUBLISHED
+            claim.reference = reference
+            claim.published_at = datetime.now(UTC)
+            self.store.commit(session, claim, actor_id=owner_id, action=PUBLISH_ACTION)
         return PublishOutcome(PublishStatus.PUBLISHED, content=content, reference=reference)
 
     def set_opt_in(
@@ -205,6 +219,12 @@ class ContentPublisher:
                 problems=("this version of the content is not approved",),
             )
         stored = self.store.load_ref(session, content)
+        if not campaign_still_approved(self.approvals, session, stored):
+            return PublishOutcome(
+                PublishStatus.CAMPAIGN_REVISED,
+                content=content,
+                problems=(CAMPAIGN_REVISED_PROBLEM,),
+            )
         if not stored.is_ready_for_export():
             return PublishOutcome(
                 PublishStatus.NOT_READY,
@@ -227,28 +247,30 @@ class ContentPublisher:
             )
         return None
 
-    def _record_failure(self, content: RecordRef, error: str, *, owner_id: uuid.UUID) -> None:
+    @staticmethod
+    def _in_progress(content: RecordRef) -> PublishOutcome:
+        return PublishOutcome(
+            PublishStatus.IN_PROGRESS,
+            content=content,
+            problems=("this version is already being published",),
+        )
+
+    def _record_failure(self, claim_id: uuid.UUID, error: str, *, owner_id: uuid.UUID) -> None:
         """Failures are audited too, so an unpublished post is explainable."""
         with self.store.unit_of_work() as session:
-            self.store.commit(
-                session,
-                MockPublication(
-                    content_id=content.record_id,
-                    content_version=content.version,
-                    channel=self.channel.name,
-                    status=PublicationStatus.FAILED,
-                    error=error,
-                ),
-                actor_id=owner_id,
-                action=FAILURE_ACTION,
-            )
+            claim = self.store.load(session, MockPublication, claim_id)
+            claim.status = PublicationStatus.FAILED
+            claim.error = error
+            self.store.commit(session, claim, actor_id=owner_id, action=FAILURE_ACTION)
 
     @staticmethod
-    def _published(session: Session, content: RecordRef) -> MockPublication | None:
+    def _claimed(session: Session, content: RecordRef) -> MockPublication | None:
         return session.scalars(
             select(MockPublication).where(
                 MockPublication.content_id == content.record_id,
                 MockPublication.content_version == content.version,
-                MockPublication.status == PublicationStatus.PUBLISHED,
+                MockPublication.status.in_(
+                    [PublicationStatus.PUBLISHING, PublicationStatus.PUBLISHED]
+                ),
             )
         ).one_or_none()

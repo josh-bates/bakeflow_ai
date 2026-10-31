@@ -1,8 +1,9 @@
 """BAKE-40: publications of approved content to a mock channel.
 
 A content version is published at most once: the partial unique index allows
-any number of failed attempts but only one published row per
-(content_id, content_version), so a retry cannot double-post.
+any number of failed attempts but only one claimed or published row per
+(content_id, content_version), and an attempt claims its row before it posts,
+so neither a retry nor an overlapping publish can double-post.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "bake40_mock_publications"
-down_revision = "bake23_quote_explanation"
+down_revision = "bake37_ai_requests"
 branch_labels = None
 depends_on = None
 
@@ -34,7 +35,7 @@ def upgrade() -> None:
             ["marketing_contents.content_id", "marketing_contents.version"],
             name="fk_mock_publications_content",
         ),
-        sa.CheckConstraint("status IN ('Published', 'Failed')", name="status"),
+        sa.CheckConstraint("status IN ('Publishing', 'Published', 'Failed')", name="status"),
         sa.CheckConstraint(
             "(status = 'Published') = (reference IS NOT NULL)", name="reference_iff_published"
         ),
@@ -51,7 +52,7 @@ def upgrade() -> None:
         "mock_publications",
         ["content_id", "content_version"],
         unique=True,
-        postgresql_where=sa.text("status = 'Published'"),
+        postgresql_where=sa.text("status IN ('Publishing', 'Published')"),
     )
 
 

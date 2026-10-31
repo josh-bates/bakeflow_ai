@@ -116,8 +116,9 @@ class MockPublication(RecordMixin, Base):
 
     A content version is published **at most once**, and the database says so
     rather than the code promising it: the partial unique index allows any
-    number of failed attempts but only one published row per
-    (content_id, content_version). A retry after a success therefore cannot
+    number of failed attempts but only one claimed or published row per
+    (content_id, content_version). An attempt claims its row as ``Publishing``
+    before it posts, so neither a retry nor an overlapping publish can
     double-post, and a retry after a failure is free to try again.
     """
 
@@ -130,7 +131,7 @@ class MockPublication(RecordMixin, Base):
             ["marketing_contents.content_id", "marketing_contents.version"],
             name="fk_mock_publications_content",
         ),
-        CheckConstraint("status IN ('Published', 'Failed')", name="status"),
+        CheckConstraint("status IN ('Publishing', 'Published', 'Failed')", name="status"),
         # A published row has its channel reference; a failed one has the error.
         CheckConstraint(
             "(status = 'Published') = (reference IS NOT NULL)", name="reference_iff_published"
@@ -144,7 +145,7 @@ class MockPublication(RecordMixin, Base):
             "content_id",
             "content_version",
             unique=True,
-            postgresql_where=text("status = 'Published'"),
+            postgresql_where=text("status IN ('Publishing', 'Published')"),
         ),
     )
 

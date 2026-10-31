@@ -313,3 +313,69 @@ def test_content_due_but_not_opted_in_is_left_alone(store, seeded):
 
     assert outcomes == []
     assert channel.feed == []
+
+
+# --- overlapping publishes and revised campaigns --------------------------
+
+
+def test_a_publish_during_a_publish_posts_nothing(store, seeded):
+    """The second attempt finds the first one's claim, while it is posting."""
+    _, _, content = ready_content(store, seeded)
+    second = []
+
+    class Overlapping(MockSocialChannel):
+        def post(self, text: str) -> str:
+            second.append(publisher.publish(content.content, owner_id=seeded.owner_id))
+            return super().post(text)
+
+    channel = Overlapping()
+    publisher = ContentPublisher(store, channel)
+
+    first = publisher.publish(content.content, owner_id=seeded.owner_id)
+
+    assert first.status is PublishStatus.PUBLISHED
+    assert second[0].status is PublishStatus.IN_PROGRESS
+    assert len(channel.feed) == 1
+    assert [row.status for row in publications(store)] == ["Published"]
+
+
+def test_two_attempts_past_the_check_are_stopped_by_the_index(store, seeded, monkeypatch):
+    """Both saw no claim; the database lets only one post."""
+    _, _, content = ready_content(store, seeded)
+    channel = MockSocialChannel()
+    publisher = ContentPublisher(store, channel)
+    publisher.publish(content.content, owner_id=seeded.owner_id)
+    monkeypatch.setattr(ContentPublisher, "_claimed", staticmethod(lambda session, ref: None))
+
+    outcome = publisher.publish(content.content, owner_id=seeded.owner_id)
+
+    assert outcome.status is PublishStatus.IN_PROGRESS
+    assert len(channel.feed) == 1
+
+
+def test_content_is_not_published_once_its_campaign_is_revised(store, seeded):
+    _, campaign, content = ready_content(store, seeded)
+    with store.unit_of_work() as session:
+        current = store.load_ref(session, campaign)
+        store.commit(
+            session,
+            Campaign(
+                campaign_id=campaign.record_id,
+                objective="A different objective.",
+                starts_at=current.starts_at,
+                ends_at=current.ends_at,
+                rationale=current.rationale,
+            ),
+            actor_id=seeded.owner_id,
+            action="test.revise",
+            expected_version=campaign.version,
+        )
+    channel = MockSocialChannel()
+
+    outcome = ContentPublisher(store, channel).publish(
+        content.content, owner_id=seeded.owner_id
+    )
+
+    assert outcome.status is PublishStatus.CAMPAIGN_REVISED
+    assert channel.feed == []
+    assert publications(store) == []
