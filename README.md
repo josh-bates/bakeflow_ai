@@ -4,7 +4,7 @@ An AI-assisted back-office system for a home-based bakery, developed for **ELEC5
 
 BakeFlow AI helps a bakery owner manage custom cake and cupcake enquiries, orders, ingredient stock, production, quotations, bookkeeping and marketing. Four specialist AI agents interpret requests and propose outcomes; deterministic services validate business data, perform calculations and coordinate workflows. The owner retains approval over important decisions.
 
-**Status:** Stage Two implementation in progress. The backend skeleton uses FastAPI, SQLAlchemy, Alembic and PostgreSQL via Docker Compose. The BAKE-10 React/TypeScript/Vite browser shell is available; business endpoint integration is in progress. Sprint 1 uses Mock; the real LLM provider remains undecided.
+**Status:** Stage Two prototype. FastAPI, SQLAlchemy, Alembic and PostgreSQL run via Docker Compose, and the React/TypeScript/Vite frontend covers the customer, owner, finance and marketing flows. The agents run on a live OpenAI-compatible provider (DeepSeek in our demo) or on the labelled Mock mode; see [LLM provider configuration](#llm-provider-configuration).
 
 ## Planned capabilities
 
@@ -175,14 +175,40 @@ never from a committed file:
 | `BAKEFLOW_LLM_BASE_URL` | OpenAI-compatible endpoint |
 | `BAKEFLOW_LLM_API_KEY` | provider key |
 | `BAKEFLOW_LLM_MODEL` | model name |
+| `BAKEFLOW_LLM_THINKING` | optional; `off` turns off DeepSeek's reasoning step (sends `"thinking": {"type": "disabled"}`). Leave it unset for other providers, which reject unknown fields |
 
 Set these in a local `.env` or in your shell. `.env` is git-ignored and must
 never be committed or included in the Canvas zip.
 
-Sprint 1 runs entirely on `MockLLMClient`, so no provider is needed to run the
-tests or an offline demo. **Provider choice is still open** — the architecture
-draft proposes campus Qwen via the AI Proxy first, with a personal subscription
-as a fallback. This section will be updated once the team confirms it.
+**Demo provider: DeepSeek** (OD-3). We ran the full demo against it in #53,
+from the customer's order to the marketing post. A team member's own key goes
+in the demo laptop's `.env` only. `deepseek-flash` is the model used in the
+live run:
+
+```bash
+BAKEFLOW_LLM_MODE=live
+BAKEFLOW_LLM_BASE_URL=https://api.deepseek.com
+BAKEFLOW_LLM_API_KEY=<your DeepSeek key>
+BAKEFLOW_LLM_MODEL=deepseek-flash
+# Optional: faster, but intake then asks for details it could infer.
+# BAKEFLOW_LLM_THINKING=off
+```
+
+After changing `.env`, run `docker compose up -d --force-recreate app`. Any
+other OpenAI-compatible provider works the same way; only these settings change.
+
+**Mock mode stays the fallback.** The tests and CI never call a provider, and
+an offline demo needs no key. If the provider is slow or unreachable on the
+day, set `BAKEFLOW_LLM_MODE=mock` and recreate the app; the UI shows the
+"Mock mode" banner. A failed live call is never replaced by a canned answer:
+the task fails visibly (for example, a quote is saved without an explanation
+and flagged for manual review).
+
+**Timing.** Each call waits up to 90 seconds, and an AI task makes at most
+three attempts. The live run showed that intake often took over 30 seconds, so
+this replaces the architecture's working 20 s / 60 s limits. Expect a live AI
+step to take several seconds; its button shows a busy label (such as
+"Explaining…") until the answer arrives.
 
 The gateway makes exactly one provider call per request and does not retry. The
 retry budget belongs to `WorkflowService` (BAKE-8).
