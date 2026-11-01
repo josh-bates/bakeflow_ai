@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import difflib
 import hashlib
 import hmac
 import json
@@ -81,11 +82,20 @@ class SalesAgent:
             "only explicit corrections replace earlier details. Preserve all other details and allergy disclosures. "
             "Return null for missing quantity, "
             "collection time or allergy information; an empty allergen_concerns list means the customer "
-            "explicitly says no concerns. Set allergen_statement to an exact quote from the customer text "
-            "containing their allergy disclosure, or null if none exists. Use catalogue names only when they match the requested product/flavour; "
-            "retain an unsupported product's name so validation can reject it. Record ingredient changes in "
-            "customisation. Preserve 'before' versus 'at'. Dates use Australia/Sydney with a numeric UTC offset. "
-            "If a year is omitted use the next occurrence; the customer must review the full date. "
+            "explicitly says no concerns, in any language (for example 'nobody has allergies' or '没有过敏'). "
+            "Set allergen_statement to an exact quote from the customer text "
+            "containing their allergy disclosure, or null if none exists. "
+            "Set product to the catalogue name the customer means: occasion, size or decoration words do not make "
+            "a new product (for example a 'chocolate birthday cake' is a chocolate celebration cake if the catalogue "
+            "has one, and 'choc chip cookies' are chocolate chip cookies). Keep the customer's own product name only "
+            "when the catalogue has no product of that kind and flavour, so validation can reject it. "
+            "Put the occasion, any writing or inscription, colours, toppers and other decoration in theme. "
+            "Use customisation only for changes to ingredients or the recipe, such as oat milk instead of milk, "
+            "less sugar or gluten-free; never for decoration. "
+            "Budget is a plain number without a currency symbol (80 for 'around $80'), or null. "
+            "Preserve 'before' versus 'at'. Dates use Australia/Sydney with a numeric UTC offset. "
+            "If a year is omitted use the next occurrence; the customer must review the full date, so do not "
+            "list an omitted year in unclear_fields. "
             f"Current date: {now.isoformat()}. Catalogue: {json.dumps(products)}. "
             f"Schema: {json.dumps(OrderInterpretation.model_json_schema())}. "
             f"Customer text: {json.dumps(message)}"
@@ -113,6 +123,31 @@ def validate_order(data: OrderInterpretation, products: dict[str, uuid.UUID], no
         issues.append("An optional budget must be zero or greater.")
     issues.extend(f"Please clarify: {field}." for field in data.unclear_fields)
     return issues
+
+
+def _product_words(name: str) -> list[str]:
+    # Customers write catalogue names in the plural or as 'choc'; compare singular, full words.
+    words = ["chocolate" if word == "choc" else word for word in re.findall(r"[a-z]+", name.casefold())]
+    return [word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith("ss") else word for word in words]
+
+
+def catalogue_match(name: str, products: dict[str, uuid.UUID]) -> str | None:
+    """The catalogue name that differs from ``name`` only by plurals or 'choc', if any."""
+    wanted = _product_words(name)
+    return next((key for key in products if _product_words(key) == wanted), None)
+
+
+def closest_products(name: str, products: dict[str, uuid.UUID], limit: int = 3) -> list[str]:
+    """Catalogue names sharing a word with, or spelled close to, an unsupported product."""
+    wanted = _product_words(name)
+    ranked = []
+    for key in products:
+        words = _product_words(key)
+        shared = len(set(wanted) & set(words))
+        ratio = difflib.SequenceMatcher(None, " ".join(wanted), " ".join(words)).ratio()
+        if shared or ratio >= 0.6:
+            ranked.append((shared, ratio, key))
+    return [key for *_, key in sorted(ranked, reverse=True)[:limit]]
 
 
 def conversation_text(message: str, clarifications: list[str]) -> str:
@@ -187,6 +222,11 @@ class OrderIntake(WorkflowService):
             # Never display an AI-generated empty list as a clean disclosure
             # while the transcript still contains an earlier concern.
             summary = summary.model_copy(update={"allergen_concerns": None, "allergen_statement": None})
+        # 'Choc chip cookies' is the catalogue's chocolate chip cookie; the customer still reviews the summary.
+        items = [item.model_copy(update={"product": found})
+                 if item.product.casefold() not in products and (found := catalogue_match(item.product, products))
+                 else item for item in summary.items]
+        summary = summary.model_copy(update={"items": items})
         issues = validate_order(summary, products, now)
         if allergy_history:
             issues = [issue for issue in issues if issue != "Please state any allergen concerns, or explicitly say you have no allergy concerns."]
@@ -199,7 +239,12 @@ class OrderIntake(WorkflowService):
             questions.append("Which bakery product would you like?")
         for item in summary.items:
             if item.product.casefold() not in products:
-                questions.append(f"We cannot offer {item.product}. Would you like to choose from: {', '.join(products)}? You can also end this request.")
+                closest = closest_products(item.product, products)
+                if closest:
+                    choices = closest[0] if len(closest) == 1 else ", ".join(closest[:-1]) + " or " + closest[-1]
+                    questions.append(f"We cannot offer {item.product}. Did you mean {choices}? You can also choose another product or end this request.")
+                else:
+                    questions.append(f"We cannot offer {item.product}. Would you like to choose from: {', '.join(products)}? You can also end this request.")
             if item.quantity is None or not 1 <= item.quantity <= 10000:
                 questions.append(f"How many {item.product} would you like (1–10,000)?")
         if summary.required_at is None or summary.required_at <= now:
