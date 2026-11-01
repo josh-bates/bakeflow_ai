@@ -22,6 +22,8 @@ from datetime import datetime
 from decimal import Decimal
 
 import pytest
+
+from app.seed import PRODUCTS
 from sqlalchemy import delete, func, insert, select, update
 
 from app.shared import RecordValidationError, StaleVersionError, UnauditedWriteError
@@ -308,7 +310,7 @@ def test_bulk_writes_to_business_tables_are_refused(store, seeded, statement):
     with store.unit_of_work() as session:
         assert store.load_ref(session, quote_ref).total == Decimal("90.00")
         assert store.load_ref(session, order_ref) is not None
-        assert session.scalar(select(func.count()).select_from(Product)) == 4
+        assert session.scalar(select(func.count()).select_from(Product)) == len(PRODUCTS)
         assert session.scalar(select(func.count()).select_from(AuditEntry)) == audits
 
 

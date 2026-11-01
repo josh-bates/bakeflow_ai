@@ -27,10 +27,10 @@ def test_seed_fills_an_empty_database(store, passwords):
         "user_accounts": 2,
         "customers": 1,
         "bakery_settings": 1,
-        "inventory_items": 8,
-        "products": 4,
-        "recipes": 4,
-        "recipe_ingredients": 28,
+        "inventory_items": 21,
+        "products": 14,
+        "recipes": 14,
+        "recipe_ingredients": 99,
     }
     with store.unit_of_work() as session:
         owner = session.scalars(select(UserAccount).where(UserAccount.email == OWNER_EMAIL)).one()
@@ -49,7 +49,7 @@ def test_seed_fills_an_empty_database(store, passwords):
         assert (recipe.yield_units, flour_line.quantity_per_batch, flour_line.required_unit) == (12, 300, "g")
 
         audited = session.scalar(select(func.count()).select_from(AuditEntry))
-        assert audited == 2 + 1 + 1 + 8 + 4 + 4  # one entry per seeded record
+        assert audited == 2 + 1 + 1 + 21 + 14 + 14  # one entry per seeded record
         assert session.get(ConstraintGuard, 1) is not None
 
 

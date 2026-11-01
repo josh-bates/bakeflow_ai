@@ -20,6 +20,8 @@ function Review({ row, session, updated, onExpired }: { row: ChangeRequest; sess
     <ProposedTerms terms={row.proposed} />
     {row.quoteTotal !== null && <p>Calculated revised quotation: <strong>AUD {row.quoteTotal}</strong></p>}
     {row.ownerNote && <p>Last review note: {row.ownerNote}</p>}
+    {row.kind === "Refund" && <p className="field-help refund-path">BakeFlow doesn't move money. Refund the customer yourself, then 
+        <a href="#/owner/finance">record the refund in Finance</a> as an expense, for example Voucher REFUND-{row.orderId.slice(0, 8)}, so the profit figures stay right.</p>}
     {["Pending", "AwaitingApproval", "Quoted"].includes(row.status) && <>
       <label htmlFor={`review-${row.id}`}>Reply to customer</label>
       <textarea id={`review-${row.id}`} value={note} maxLength={2000} disabled={busy} onChange={e => setNote(e.target.value)} />

@@ -4,6 +4,7 @@ import { referrals, type Referral, type CatalogueItem, type Resolution, type Rev
 import { Notice } from "./Notice";
 
 const empty: ReviewedSummary = { items: [], required_at: null, collection_kind: "at", allergen_concerns: null, allergen_statement: null, budget: null };
+const FINISHED = ["Completed", "Closed"];
 const labels = { Pending: "Waiting for the owner", NeedsClarification: "More information needed", AwaitingCustomer: "Ready for your review", Completed: "Review completed", Closed: "Closed" };
 
 function Summary({ data }: { data: ReviewedSummary }) {
@@ -80,6 +81,8 @@ function ReviewCard({ row, owner, catalogue, session, changed, expired }: {
     <p className="muted">Reference {row.id} · version {row.version}</p>
     <h4>Original request</h4><p style={{ whiteSpace: "pre-wrap" }}>{row.message}</p>
     {row.orderId && <p>Order: {row.orderId}</p>}
+    {owner && row.kind === "Refund" && row.orderId && <p className="field-help refund-path">BakeFlow doesn't move money. Refund the customer yourself, then 
+        <a href="#/owner/finance">record the refund in Finance</a> as an expense, for example Voucher REFUND-{row.orderId.slice(0, 8)}, so the profit figures stay right.</p>}
     {row.conversation.map((m, i) => <p key={i}><strong>{m.role}:</strong> {m.text}</p>)}
     {row.resolution && <section aria-label="Owner resolution"><h4>Owner resolution</h4><p>{row.resolution.note}</p>{row.resolution.summary && <Summary data={row.resolution.summary} />}</section>}
     {error && <Notice error>{error}</Notice>}
@@ -113,15 +116,25 @@ export function OwnerReviews({ session, refreshKey, onExpired, showRequestForm =
     }).catch(e => { if (active) { setError(e.message); if (e instanceof ApiError && e.status === 401) onExpired?.(); } }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [owner, reload, refreshKey, onExpired]);
+  // A customer with nothing under review has no use for an empty section.
+  // Finished reviews stay on record but fold away, so the open ones are what the page shows.
+  const open = rows.filter(row => !FINISHED.includes(row.status));
+  const finished = rows.filter(row => FINISHED.includes(row.status));
+  const card = (row: Referral) => <ReviewCard key={`${row.id}:${row.version}:${row.status}`} row={row} session={session} owner={owner} catalogue={catalogue} changed={() => setReload(n => n + 1)} expired={onExpired} />;
+  if (!owner && !showRequestForm && !loading && !error && !rows.length) return null;
   return <section className="owner-reviews" aria-labelledby="owner-reviews-title">
     <div className="section-heading">
-      <h2 id="owner-reviews-title">{owner ? "Order exceptions awaiting review" : "Owner reviews"}</h2>
+      <h2 id="owner-reviews-title">{owner ? "Order exceptions awaiting review" : "Requests with the bakery owner"}</h2>
       <button className="secondary" disabled={loading} onClick={() => setReload(n => n + 1)}>Refresh reviews</button>
     </div>
     <p className="field-help">Custom recipes and uncertain allergen details wait for the owner before an order draft is saved.</p>
     {loading ? <p>Loading reviews…</p> : error ? <Notice error>{error}</Notice> : <>
-      {!rows.length && <p>No owner reviews yet.</p>}
-      {rows.map(row => <ReviewCard key={`${row.id}:${row.version}:${row.status}`} row={row} session={session} owner={owner} catalogue={catalogue} changed={() => setReload(n => n + 1)} expired={onExpired} />)}
+      {!open.length && <p>{owner ? "Nothing is waiting for your review." : "No owner reviews yet."}</p>}
+      {open.map(card)}
+      {finished.length > 0 && <details className="earlier">
+        <summary>Finished reviews <span className="count">{finished.length}</span></summary>
+        {finished.map(card)}
+      </details>}
     </>}
     {!owner && showRequestForm && <details><summary>Request a refund or a change to work in production</summary><form onSubmit={async e => {
       e.preventDefault(); if (busy) return; setBusy(true); setError("");

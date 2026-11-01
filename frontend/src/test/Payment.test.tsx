@@ -98,9 +98,11 @@ it("does not start a second payment for an order already paid", async () => {
   render(<App />);
 
   await screen.findByText("24 Vanilla cupcake", {}, { timeout: 5000 });
-  await user.click(screen.getByRole("button", { name: `Pay for order ${ORDER}` }));
 
-  expect(await screen.findByText("Paid $94.23. Thank you!")).toBeInTheDocument();
+  // A paid order says so instead of offering Pay again.
+  expect(await screen.findByText("Paid")).toHaveAttribute("data-status", "Completed");
+  expect(screen.queryByRole("button", { name: `Pay for order ${ORDER}` })).not.toBeInTheDocument();
+  void user;
   expect(posts(`/api/orders/${ORDER}/payments`)).toHaveLength(0);
 });
 
