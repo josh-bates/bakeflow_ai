@@ -415,3 +415,20 @@ def test_owner_routing_ignores_whole_group_denials_only():
     summary = {"items": [{"product": "vanilla cupcake", "quantity": 24}], "allergen_concerns": []}
     assert not needs_owner(summary, "24 vanilla cupcakes on Friday. Nobody has allergies.")
     assert needs_owner(summary, "24 vanilla cupcakes on Friday. Nobody has allergies except Sam.")
+
+
+@pytest.mark.parametrize("message,quoted", [
+    ("24 vanilla cupcakes. Nobody has allergies, except Sam.", "Nobody has allergies"),
+    ("24 vanilla cupcakes. No allergies, except peanuts.", "No allergies"),
+    ("24 vanilla cupcakes. No allergies, thanks, but one of us avoids dairy", "No allergies, thanks"),
+    ("24 vanilla cupcakes，没有过敏，除了小明", "没有过敏"),
+])
+def test_a_qualifier_after_the_comma_keeps_the_denial_for_review(environment, message, quoted):
+    from app.sales.allergy_guard import concern_evidence
+    from app.sales.referrals import needs_owner
+    summary = {"items": [{"product": "vanilla cupcake", "quantity": 24}], "allergen_concerns": []}
+    assert concern_evidence([message])
+    assert needs_owner(summary, message)
+    # Even when the model quotes only the denial, the transcript keeps the request from being saved.
+    flow, customer, _ = service(environment, valid_data() | {"allergen_statement": quoted})
+    assert flow.preview(customer, message)["confirmationToken"] is None
