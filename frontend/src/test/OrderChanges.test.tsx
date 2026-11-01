@@ -86,3 +86,12 @@ it("returns to sign-in when an owner decision session expires", async () => {
   await waitFor(() => expect(expired).toHaveBeenCalledOnce());
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
+
+it("points the owner to Finance to record a refund", async () => {
+  vi.mocked(changes.list).mockResolvedValue([{ ...request, kind: "Refund", orderId: "abcdef12-0000-0000-0000-000000000000",
+    message: "Please refund the deposit", proposed: {} }]);
+  render(<OrderChangeReviews session={{ ...session, user: { displayName: "Owner", role: "Owner" } }} />);
+  const link = await screen.findByRole("link", { name: "record the refund in Finance" });
+  expect(link).toHaveAttribute("href", "#/owner/finance");
+  expect(screen.getByText(/REFUND-abcdef12/)).toBeInTheDocument();
+});
