@@ -372,3 +372,63 @@ def test_explicit_no_concerns_without_history_remains_saveable(environment, disc
     result = flow.preview(customer, "24 vanilla birthday cupcakes", [disclosure])
     assert result["issues"] == []
     assert result["confirmationToken"]
+
+
+@pytest.mark.parametrize("statement", ["Nobody has allergies.", "No one has any allergies", "none of us have allergies!", "没有过敏", "我们没有任何过敏。"])
+def test_group_and_chinese_no_allergies_statements_are_accepted(environment, statement):
+    flow, customer, _ = service(environment, valid_data() | {"allergen_statement": statement})
+    assert flow.preview(customer, f"24 vanilla cupcakes. {statement}")["confirmationToken"]
+
+
+@pytest.mark.parametrize("statement", ["Nobody has allergies except Sam", "No one has allergies but avoid nuts"])
+def test_qualified_group_denials_are_not_treated_as_no_concerns(environment, statement):
+    flow, customer, _ = service(environment, valid_data() | {"allergen_statement": statement})
+    assert flow.preview(customer, f"24 vanilla cupcakes. {statement}")["confirmationToken"] is None
+
+
+def test_plural_or_short_product_name_maps_to_the_catalogue(environment):
+    flow, customer, _ = service(environment, valid_data() | {"items": [{"product": "Vanilla cupcakes", "quantity": 24}]})
+    result = flow.preview(customer, "24 vanilla cupcakes, no allergy concerns")
+    assert result["summary"]["items"][0]["product"] == "vanilla cupcake"
+    assert result["confirmationToken"]
+
+
+def test_unsupported_product_suggests_the_closest_catalogue_product(environment):
+    flow, customer, _ = service(environment, valid_data() | {"items": [{"product": "vanilla birthday cupcake", "quantity": 24}]})
+    result = flow.preview(customer, "24 vanilla birthday cupcakes, no allergy concerns")
+    assert result["confirmationToken"] is None
+    assert any("Did you mean vanilla cupcake?" in q and "end this request" in q for q in result["questions"])
+
+
+def test_closest_products_rank_shared_words_first():
+    from app.sales.intake import catalogue_match, closest_products
+    products = {name: uuid.uuid4() for name in ["chocolate celebration cake", "chocolate cupcake", "vanilla cupcake",
+                                                  "chocolate chip cookie", "carrot cake"]}
+    assert catalogue_match("Choc chip cookies", products) == "chocolate chip cookie"
+    assert catalogue_match("chocolate birthday cake", products) is None
+    assert closest_products("chocolate birthday cake", products)[0] == "chocolate celebration cake"
+    assert closest_products("croissant", products) == []
+
+
+def test_owner_routing_ignores_whole_group_denials_only():
+    from app.sales.referrals import needs_owner
+    summary = {"items": [{"product": "vanilla cupcake", "quantity": 24}], "allergen_concerns": []}
+    assert not needs_owner(summary, "24 vanilla cupcakes on Friday. Nobody has allergies.")
+    assert needs_owner(summary, "24 vanilla cupcakes on Friday. Nobody has allergies except Sam.")
+
+
+@pytest.mark.parametrize("message,quoted", [
+    ("24 vanilla cupcakes. Nobody has allergies, except Sam.", "Nobody has allergies"),
+    ("24 vanilla cupcakes. No allergies, except peanuts.", "No allergies"),
+    ("24 vanilla cupcakes. No allergies, thanks, but one of us avoids dairy", "No allergies, thanks"),
+    ("24 vanilla cupcakes，没有过敏，除了小明", "没有过敏"),
+])
+def test_a_qualifier_after_the_comma_keeps_the_denial_for_review(environment, message, quoted):
+    from app.sales.allergy_guard import concern_evidence
+    from app.sales.referrals import needs_owner
+    summary = {"items": [{"product": "vanilla cupcake", "quantity": 24}], "allergen_concerns": []}
+    assert concern_evidence([message])
+    assert needs_owner(summary, message)
+    # Even when the model quotes only the denial, the transcript keeps the request from being saved.
+    flow, customer, _ = service(environment, valid_data() | {"allergen_statement": quoted})
+    assert flow.preview(customer, message)["confirmationToken"] is None

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.inventory_production import InventoryService
+from app.sales.allergy_guard import NOT_QUALIFIED, without_no_concerns
 from app.sales.intake import CustomerIdentity, IntakeError, OrderIntake, OrderInterpretation, validate_order
 from app.shared.approvals import ApprovalService
 from app.shared.records import Customer, Order, OrderItem, OwnerReferral, Product, Recipe
@@ -40,10 +41,11 @@ def needs_owner(summary: dict, text: str) -> bool:
     """
     if summary.get("allergen_concerns") or any(i.get("customisation") for i in summary.get("items", [])):
         return True
-    cleaned = re.sub(r"\bno (?:known )?(?:allergies|allergy concerns)\b", "", text, flags=re.I)
+    # Whole no-concern clauses ('Nobody has allergies.') first, so 'nobody has allergies except Sam' stays.
+    cleaned = re.sub(r"\bno (?:known )?(?:allergies|allergy concerns)\b" + NOT_QUALIFIED, "", without_no_concerns(text), flags=re.I)
     return bool(re.search(
         r"\ballerg\w*\b|\bintoleran\w*\b|\b(?:nut|peanut|dairy|gluten|egg)[ -]free\b|"
-        r"\b(?:without|avoid|substitute|replace)\b|\bno (?:nuts|eggs|milk|dairy|gluten)\b", cleaned, re.I))
+        r"\b(?:without|avoid|substitute|replace)\b|\bno (?:nuts|eggs|milk|dairy|gluten)\b|过敏", cleaned, re.I))
 
 
 def view(row: OwnerReferral) -> dict:
